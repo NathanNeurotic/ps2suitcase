@@ -18,7 +18,7 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
             .spacing(egui::vec2(12.0, 6.0))
             .show(ui, |ui| {
                 ui.label("SAS prefix");
-                let prefix_changed = egui::ComboBox::from_id_source("metadata_prefix_combo")
+                let prefix_changed = egui::ComboBox::new("metadata_prefix_combo", "")
                     .selected_text(app.selected_prefix.label())
                     .show_ui(ui, |ui| {
                         let mut changed = false;

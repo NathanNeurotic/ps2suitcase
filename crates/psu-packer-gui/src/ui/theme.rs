@@ -23,16 +23,16 @@ pub struct Palette {
 impl Default for Palette {
     fn default() -> Self {
         Self {
-            background: Color32::from_rgb(6, 8, 20),
-            panel: Color32::from_rgb(18, 38, 52),
-            input_background: Color32::from_rgb(32, 58, 78),
-            header_top: Color32::from_rgb(12, 16, 40),
-            header_bottom: Color32::from_rgb(60, 40, 120),
-            footer_top: Color32::from_rgb(16, 30, 52),
-            footer_bottom: Color32::from_rgb(52, 52, 112),
-            neon_accent: Color32::from_rgb(150, 92, 255),
-            soft_accent: Color32::from_rgb(124, 148, 220),
-            separator: Color32::from_rgb(88, 68, 168),
+            background: Color32::from_rgb(2, 0, 14),
+            panel: Color32::from_rgb(1, 0, 7),
+            input_background: Color32::from_rgb(28, 28, 48),
+            header_top: Color32::from_rgb(2, 0, 14),
+            header_bottom: Color32::from_rgb(10, 0, 54),
+            footer_top: Color32::from_rgb(2, 0, 14),
+            footer_bottom: Color32::from_rgb(10, 0, 54),
+            neon_accent: Color32::from_rgb(110, 0, 255),
+            soft_accent: Color32::from_rgb(72, 64, 128),
+            separator: Color32::from_rgb(110, 0, 255),
             text_primary: Color32::from_rgb(214, 220, 240),
         }
     }
@@ -75,16 +75,20 @@ pub fn display_heading_text(ui: &egui::Ui, text: impl Into<String>) -> RichText 
 fn apply_visuals(ctx: &egui::Context, palette: &Palette) {
     let mut visuals = egui::Visuals::dark();
     visuals.override_text_color = Some(palette.text_primary);
-    visuals.widgets.noninteractive.bg_fill = palette.input_background.gamma_multiply(0.9);
+    visuals.widgets.noninteractive.bg_fill = palette.input_background;
     visuals.widgets.noninteractive.fg_stroke.color = palette.text_primary;
     visuals.widgets.inactive.bg_fill = palette.input_background;
     visuals.widgets.inactive.fg_stroke.color = palette.text_primary;
-    visuals.widgets.hovered.bg_fill = palette.soft_accent.gamma_multiply(0.22);
-    visuals.widgets.active.bg_fill = palette.soft_accent.gamma_multiply(0.32);
-    visuals.widgets.open.bg_fill = palette.input_background.gamma_multiply(0.95);
+    visuals.widgets.hovered.bg_fill = palette.soft_accent;
+    visuals.widgets.active.bg_fill = palette.neon_accent.gamma_multiply(0.7);
+    visuals.widgets.open.bg_fill = palette.input_background;
     visuals.extreme_bg_color = palette.background;
     visuals.faint_bg_color = palette.background;
-    visuals.panel_fill = palette.background;
+    visuals.panel_fill = palette.panel;
+    visuals.window_fill = palette.panel;
+    visuals.window_stroke.color = palette.neon_accent;
+    visuals.window_shadow.color = palette.neon_accent;
+    visuals.popup_shadow.color = palette.neon_accent;
 
     ctx.set_visuals(visuals);
 }
