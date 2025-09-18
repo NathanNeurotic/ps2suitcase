@@ -9,7 +9,8 @@ folders (and everything inside them) are ordered newest→oldest by a stable map
 folder name → timestamp. Timestamps are accurate to FAT/VFAT realities.
 
 Key behavior:
-- Base time = 12/31/2098 23:59:59 (LOCAL). We subtract a deterministic offset per folder.
+- Base timeline starts at 12/31/2098 00:00:00 (LOCAL). Each category owns one future day and
+  projects within that category advance forward in two-second slots.
 - Newest → oldest category blocks in this order:
     APP_*  → APPS → PS1_* → EMU_* → GME_* → DST_* → DBG_* → RAA_* → RTE_* → DEFAULT → SYS_* → ZZY_* → ZZZ_*
 - Unprefixed special names are mapped to an **effective**, prefixed name (e.g., BOOT → SYS_BOOT)
@@ -39,8 +40,9 @@ from datetime import datetime, timezone, timedelta
 SECONDS_BETWEEN_ITEMS = 2
 
 # Big slot budget so each name gets a unique second within its category, even with many items.
-# 86_400 seconds ≈ 1 day per category. Nice for viewing in file browser as each category will be a different day.
-SLOTS_PER_CATEGORY   = 86_400
+# 43,200 slots × 2 seconds = 86,400 seconds (exactly one day) per category. Nice for viewing in
+# a file browser as each category will land on its own day.
+SLOTS_PER_CATEGORY   = 43_200
 
 # Comma-separated lists of names (no prefixes) to be treated as if they belong to these categories.
 # Edit these to add your own folder names (case-insensitive). Whitespace is ignored.
@@ -257,22 +259,22 @@ def _deterministic_offset_seconds(folder_name: str):
     return cat_offset + name_offset, cat_idx, slot, eff
 
 # --- Timestamp planner ---
-def _base_datetime_local_to_utc() -> datetime:
+def _anchor_local_datetime() -> datetime:
     """
-    Convert the local anchor time to UTC (base reference for deterministic subtraction).
+    Return the local anchor datetime (used as ANCHOR_START in the forward timeline).
     """
-    local_naive = datetime(2098, 12, 31, 23, 59, 59)  # can be 23:59:58 if you want an inherently even anchor
+    local_naive = datetime(2098, 12, 31, 0, 0, 0)
     local_tz = datetime.now().astimezone().tzinfo
-    local_aware = local_naive.replace(tzinfo=local_tz)
-    return local_aware.astimezone(timezone.utc)
+    return local_naive.replace(tzinfo=local_tz)
 
 def _planned_timestamp_for_folder(folder_name: str):
     """
     Return a tuple (utc_dt, effective_name, category_label, cat_idx, slot_idx, offset_sec).
     """
-    base_utc = _base_datetime_local_to_utc()
+    anchor_local = _anchor_local_datetime()
     offset_sec, cat_idx, slot_idx, eff = _deterministic_offset_seconds(folder_name)
-    ts_utc = datetime.fromtimestamp(base_utc.timestamp() - offset_sec, tz=timezone.utc)
+    planned_local = anchor_local + timedelta(seconds=offset_sec)
+    ts_utc = planned_local.astimezone(timezone.utc)
     return ts_utc, eff, _category_label_for_effective(eff), cat_idx, slot_idx, offset_sec
 
 # --- FAT-safe snapping ---

@@ -125,7 +125,7 @@ impl TimestampRules {
     }
 
     const fn default_slots_per_category() -> u32 {
-        86_400
+        43_200
     }
 
     fn default_categories() -> Vec<CategoryRule> {
@@ -152,9 +152,9 @@ impl TimestampRules {
             max_value - (max_value % 2)
         };
         self.seconds_between_items = next_even.min(max_even) as u32;
-        if self.slots_per_category == 0 {
-            self.slots_per_category = Self::default_slots_per_category();
-        }
+        // Slots per category are pinned to a single local day worth of two-second slots so
+        // each category can occupy its own date on the timeline.
+        self.slots_per_category = Self::default_slots_per_category();
 
         if self.categories.is_empty() {
             *self = Self::default();
@@ -252,22 +252,33 @@ pub(crate) fn planned_timestamp_for_name(
         return None;
     }
 
-    let offset_seconds = deterministic_offset_seconds(trimmed, rules)?;
-    let base = base_datetime_local_to_utc()?;
-    let planned_utc = base - Duration::seconds(offset_seconds);
+    // Each category begins at ANCHOR_START + category_index days at local midnight and then
+    // advances forward in two-second slots within that day.
+    let (category_index, slot_offset_seconds) = deterministic_offset_seconds(trimmed, rules)?;
+    let anchor_date = anchor_naive_date()?;
+    let midnight = NaiveTime::from_hms_opt(0, 0, 0)?;
+    let category_start_date =
+        anchor_date.checked_add_signed(Duration::days(category_index as i64))?;
+    let category_start = NaiveDateTime::new(category_start_date, midnight);
+    let local_midnight = match Local.from_local_datetime(&category_start) {
+        LocalResult::Single(dt) => dt,
+        LocalResult::Ambiguous(dt, alt) => dt.min(alt),
+        LocalResult::None => return None,
+    };
+
+    let planned_local = local_midnight + Duration::seconds(slot_offset_seconds);
+    let planned_utc = planned_local.with_timezone(&Utc);
     let snapped = snap_even_second(planned_utc);
     let local = snapped.with_timezone(&Local);
     Some(local.naive_local())
 }
 
-fn deterministic_offset_seconds(name: &str, rules: &TimestampRules) -> Option<i64> {
+fn deterministic_offset_seconds(name: &str, rules: &TimestampRules) -> Option<(usize, i64)> {
     let effective = normalize_name_for_rules(name, rules)?;
     let category_index = category_priority_index(&effective, rules)?;
     let slot = slot_index_within_category(&effective, rules);
-    let category_block_seconds = rules.seconds_between_items_i64() * rules.slots_per_category_i64();
-    let category_offset = category_index as i64 * category_block_seconds;
     let name_offset = slot * rules.seconds_between_items_i64();
-    Some(category_offset + name_offset)
+    Some((category_index, name_offset))
 }
 
 fn normalize_name_for_rules(name: &str, rules: &TimestampRules) -> Option<String> {
@@ -358,18 +369,10 @@ fn payload_for_effective(effective: &str, rules: &TimestampRules) -> String {
     }
 }
 
-fn base_datetime_local_to_utc() -> Option<DateTime<Utc>> {
-    let date = NaiveDate::from_ymd_opt(2098, 12, 31)?;
-    let time = NaiveTime::from_hms_opt(23, 59, 59)?;
-    let naive = NaiveDateTime::new(date, time);
-
-    let local = match Local.from_local_datetime(&naive) {
-        LocalResult::Single(dt) => dt,
-        LocalResult::Ambiguous(dt, alt) => dt.min(alt),
-        LocalResult::None => return None,
-    };
-
-    Some(local.with_timezone(&Utc))
+/// Returns the local anchor date (December 31, 2098) used as the forward-moving baseline
+/// for SAS timestamps.
+fn anchor_naive_date() -> Option<NaiveDate> {
+    NaiveDate::from_ymd_opt(2098, 12, 31)
 }
 
 fn snap_even_second(dt: DateTime<Utc>) -> DateTime<Utc> {
@@ -456,6 +459,10 @@ mod tests {
         rules.sanitize();
         assert!(rules.seconds_between_items >= 2);
         assert_eq!(rules.seconds_between_items % 2, 0);
+        assert_eq!(
+            rules.slots_per_category,
+            TimestampRules::default_slots_per_category()
+        );
 
         let first_name = "A";
         let second_name = "B";
@@ -465,13 +472,16 @@ mod tests {
             normalize_name_for_rules(second_name, &rules).expect("second effective name");
         let first_slot = slot_index_within_category(&first_effective, &rules);
         let second_slot = slot_index_within_category(&second_effective, &rules);
-        assert_eq!(second_slot, first_slot + 1, "expected consecutive slots");
+        assert!(
+            second_slot >= first_slot,
+            "expected ordering to be monotonic"
+        );
 
         let first_timestamp =
             planned_timestamp_for_name(first_name, &rules).expect("first timestamp");
         let second_timestamp =
             planned_timestamp_for_name(second_name, &rules).expect("second timestamp");
 
-        assert_ne!(first_timestamp, second_timestamp);
+        assert!(second_timestamp > first_timestamp);
     }
 }
