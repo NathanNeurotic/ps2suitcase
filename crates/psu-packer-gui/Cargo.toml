@@ -5,8 +5,8 @@ license.workspace = true
 version.workspace = true
 
 [features]
-default = []
-# Re-enable the psu.toml editor UI with `--features psu-toml-editor`.
+default = ["psu-toml-editor"]
+# The psu.toml editor UI is enabled by default; disable with `--no-default-features` if needed.
 psu-toml-editor = []
 
 [dependencies]

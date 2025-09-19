@@ -262,7 +262,7 @@ impl Default for TimestampStrategy {
 enum EditorTab {
     PsuSettings,
     #[cfg(feature = "psu-toml-editor")]
-    /// Enable the psu.toml editor again with `--features psu-toml-editor`.
+    /// psu.toml editor tab (enabled by default; disable with `--no-default-features`).
     PsuToml,
     TitleCfg,
     IconSys,
