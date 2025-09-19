@@ -8,7 +8,7 @@ use std::{
 
 use crate::ui::theme;
 use chrono::NaiveDateTime;
-use eframe::egui::{self, Widget};
+use eframe::egui;
 use ps2_filetypes::{sjis, templates, IconSys, PSUEntryKind, TitleCfg, PSU};
 use psu_packer::{ColorConfig, ColorFConfig, IconSysConfig, VectorConfig};
 use tempfile::{tempdir, TempDir};
@@ -609,17 +609,13 @@ impl PackerApp {
         alert: bool,
         font: &egui::FontId,
     ) {
-        let widget = EditorTabWidget::new(
-            label,
-            font.clone(),
-            &self.theme,
-            self.editor_tab == tab,
-            alert,
-        );
-        let response = ui.add(widget);
-        if response.clicked() {
-            self.editor_tab = tab;
+        let mut text = egui::RichText::new(label.to_owned()).font(font.clone());
+        if alert && self.editor_tab != tab {
+            text = text.color(self.theme.neon_accent);
         }
+
+        ui.selectable_value(&mut self.editor_tab, tab, text)
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
     }
 
     pub(crate) fn load_timestamp_rules_from_folder(&mut self, folder: &Path) {
@@ -2686,65 +2682,82 @@ impl eframe::App for PackerApp {
                 ui.add_space(8.0);
 
                 let tab_font = theme::display_font(18.0);
-                let tab_bar = ui.horizontal_wrapped(|ui| {
-                    let spacing = ui.spacing_mut();
-                    spacing.item_spacing.x = 12.0;
-                    spacing.item_spacing.y = 8.0;
+                let tab_bar = egui::ScrollArea::horizontal()
+                    .id_source("editor_tabs_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let previous_spacing = {
+                                let spacing = ui.spacing_mut();
+                                let old = spacing.item_spacing;
+                                spacing.item_spacing.x = 12.0;
+                                spacing.item_spacing.y = 8.0;
+                                old
+                            };
 
-                    self.editor_tab_button(
-                        ui,
-                        EditorTab::PsuSettings,
-                        "PSU Settings",
-                        false,
-                        &tab_font,
-                    );
+                            self.editor_tab_button(
+                                ui,
+                                EditorTab::PsuSettings,
+                                "PSU Settings",
+                                false,
+                                &tab_font,
+                            );
 
-                    #[cfg(feature = "psu-toml-editor")]
-                    {
-                        let psu_toml_label = if self.psu_toml_editor.modified {
-                            "psu.toml*"
-                        } else {
-                            "psu.toml"
-                        };
-                        self.editor_tab_button(
-                            ui,
-                            EditorTab::PsuToml,
-                            psu_toml_label,
-                            self.psu_toml_editor.modified,
-                            &tab_font,
-                        );
-                    }
+                            #[cfg(feature = "psu-toml-editor")]
+                            {
+                                let psu_toml_label = if self.psu_toml_editor.modified {
+                                    "psu.toml*"
+                                } else {
+                                    "psu.toml"
+                                };
+                                self.editor_tab_button(
+                                    ui,
+                                    EditorTab::PsuToml,
+                                    psu_toml_label,
+                                    self.psu_toml_editor.modified,
+                                    &tab_font,
+                                );
+                            }
 
-                    let title_cfg_label = if self.title_cfg_editor.modified {
-                        "title.cfg*"
-                    } else {
-                        "title.cfg"
-                    };
-                    self.editor_tab_button(
-                        ui,
-                        EditorTab::TitleCfg,
-                        title_cfg_label,
-                        self.title_cfg_editor.modified,
-                        &tab_font,
-                    );
+                            let title_cfg_label = if self.title_cfg_editor.modified {
+                                "title.cfg*"
+                            } else {
+                                "title.cfg"
+                            };
+                            self.editor_tab_button(
+                                ui,
+                                EditorTab::TitleCfg,
+                                title_cfg_label,
+                                self.title_cfg_editor.modified,
+                                &tab_font,
+                            );
 
-                    self.editor_tab_button(ui, EditorTab::IconSys, "icon.sys", false, &tab_font);
+                            self.editor_tab_button(
+                                ui,
+                                EditorTab::IconSys,
+                                "icon.sys",
+                                false,
+                                &tab_font,
+                            );
 
-                    let timestamp_label = if self.timestamp_rules_modified {
-                        "Timestamp rules*"
-                    } else {
-                        "Timestamp rules"
-                    };
-                    self.editor_tab_button(
-                        ui,
-                        EditorTab::TimestampAuto,
-                        timestamp_label,
-                        self.timestamp_rules_modified,
-                        &tab_font,
-                    );
-                });
+                            let timestamp_label = if self.timestamp_rules_modified {
+                                "Timestamp rules*"
+                            } else {
+                                "Timestamp rules"
+                            };
+                            self.editor_tab_button(
+                                ui,
+                                EditorTab::TimestampAuto,
+                                timestamp_label,
+                                self.timestamp_rules_modified,
+                                &tab_font,
+                            );
 
-                let tab_rect = tab_bar.response.rect;
+                            ui.spacing_mut().item_spacing = previous_spacing;
+                        });
+                    });
+
+                let tab_rect = tab_bar.inner_rect;
                 let tab_separator = egui::Rect::from_min_max(
                     egui::pos2(rect.min.x, tab_rect.max.y + 4.0),
                     egui::pos2(rect.max.x, tab_rect.max.y + 6.0),
@@ -2882,101 +2895,6 @@ impl eframe::App for PackerApp {
 
         ui::dialogs::pack_confirmation(self, ctx);
         ui::dialogs::exit_confirmation(self, ctx);
-    }
-}
-
-struct EditorTabWidget<'a> {
-    label: &'a str,
-    font: egui::FontId,
-    theme: &'a theme::Palette,
-    is_selected: bool,
-    alert: bool,
-}
-
-impl<'a> EditorTabWidget<'a> {
-    fn new(
-        label: &'a str,
-        font: egui::FontId,
-        theme: &'a theme::Palette,
-        is_selected: bool,
-        alert: bool,
-    ) -> Self {
-        Self {
-            label,
-            font,
-            theme,
-            is_selected,
-            alert,
-        }
-    }
-}
-
-impl<'a> Widget for EditorTabWidget<'a> {
-    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-        let base_padding = egui::vec2(12.0, 6.0);
-        let hover_extra = egui::vec2(2.0, 2.0);
-        let selected_extra = egui::vec2(4.0, 4.0);
-        let max_padding = base_padding + selected_extra;
-        let rounding = egui::CornerRadius::same(10);
-
-        let mut text_color = self.theme.text_primary;
-        if self.is_selected {
-            text_color = egui::Color32::WHITE;
-        } else if self.alert {
-            text_color = self.theme.neon_accent;
-        }
-
-        let galley = ui.fonts(|fonts| {
-            fonts.layout_no_wrap(self.label.to_owned(), self.font.clone(), text_color)
-        });
-        let desired_size = galley.size() + max_padding * 2.0;
-
-        let (rect, mut response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
-
-        if ui.is_rect_visible(rect) {
-            let mut padding = base_padding;
-            if response.hovered() {
-                padding += hover_extra;
-            }
-            if self.is_selected {
-                padding += selected_extra;
-            }
-
-            let fill = if self.is_selected {
-                self.theme.neon_accent.gamma_multiply(0.45)
-            } else if response.hovered() {
-                self.theme.soft_accent.gamma_multiply(0.38)
-            } else if self.alert {
-                self.theme.neon_accent.gamma_multiply(0.24)
-            } else {
-                self.theme.soft_accent.gamma_multiply(0.24)
-            };
-
-            let mut stroke_color = self.theme.soft_accent.gamma_multiply(0.7);
-            if self.is_selected {
-                stroke_color = self.theme.neon_accent;
-            } else if self.alert || response.hovered() {
-                stroke_color = self.theme.neon_accent.gamma_multiply(0.8);
-            }
-
-            ui.painter().rect_filled(rect, rounding, fill);
-            ui.painter().rect_stroke(
-                rect,
-                rounding,
-                egui::Stroke::new(1.0, stroke_color),
-                egui::StrokeKind::Outside,
-            );
-
-            let text_pos = rect.left_top() + padding;
-            ui.painter().galley(text_pos, galley, text_color);
-        }
-
-        response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-        let enabled = response.enabled();
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, self.label)
-        });
-        response
     }
 }
 
