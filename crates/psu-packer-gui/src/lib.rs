@@ -2605,20 +2605,27 @@ impl eframe::App for PackerApp {
                         ui.label(
                             egui::RichText::new("Packing PSU…")
                                 .font(theme::display_font(26.0))
-                                .color(self.theme.neon_accent),
+                                .color(self.theme.text_primary),
                         );
                         ui.add_space(8.0);
                         ui.add(
                             egui::ProgressBar::new(progress)
                                 .desired_width(200.0)
-                                .animate(true),
+                                .animate(true)
+                                .fill(self.theme.neon_accent),
                         );
                     });
                 });
         }
 
         egui::TopBottomPanel::top("top_panel")
-            .frame(egui::Frame::none().fill(self.theme.background))
+            .frame(
+                egui::Frame::new()
+                    .inner_margin(egui::Margin::same(0))
+                    .outer_margin(egui::Margin::same(0))
+                    .fill(self.theme.panel)
+                    .stroke(egui::Stroke::NONE),
+            )
             .show(ctx, |ui| {
                 let rect = ui.max_rect();
                 theme::draw_vertical_gradient(
@@ -2655,7 +2662,13 @@ impl eframe::App for PackerApp {
             });
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(self.theme.background))
+            .frame(
+                egui::Frame::new()
+                    .inner_margin(egui::Margin::same(0))
+                    .outer_margin(egui::Margin::same(0))
+                    .fill(self.theme.panel)
+                    .stroke(egui::Stroke::NONE),
+            )
             .show(ctx, |ui| {
                 let rect = ui.max_rect();
                 theme::draw_vertical_gradient(
