@@ -1,9 +1,6 @@
-use std::{collections::HashSet, path::Path};
+use std::{collections::HashSet, convert::TryFrom, path::Path};
 
-use chrono::{
-    DateTime, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone,
-    Timelike, Utc,
-};
+use chrono::{DateTime, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy)]
@@ -121,11 +118,11 @@ impl CategoryRule {
 
 impl TimestampRules {
     const fn default_seconds_between_items() -> u32 {
-        2
+        1
     }
 
     const fn default_slots_per_category() -> u32 {
-        43_200
+        86_400
     }
 
     fn default_categories() -> Vec<CategoryRule> {
@@ -145,16 +142,7 @@ impl TimestampRules {
         if self.seconds_between_items == 0 {
             self.seconds_between_items = Self::default_seconds_between_items();
         }
-        let adjusted = u64::from(self.seconds_between_items.max(2));
-        let next_even = ((adjusted + 1) / 2) * 2;
-        let max_even = {
-            let max_value = u64::from(u32::MAX);
-            max_value - (max_value % 2)
-        };
-        self.seconds_between_items = next_even.min(max_even) as u32;
-        // Slots per category are pinned to a single local day worth of two-second slots so
-        // each category can occupy its own date on the timeline.
-        self.slots_per_category = Self::default_slots_per_category();
+        self.seconds_between_items = self.seconds_between_items.max(1);
 
         if self.categories.is_empty() {
             *self = Self::default();
@@ -252,33 +240,41 @@ pub(crate) fn planned_timestamp_for_name(
         return None;
     }
 
-    // Each category begins at ANCHOR_START + category_index days at local midnight and then
-    // advances forward in two-second slots within that day.
-    let (category_index, slot_offset_seconds) = deterministic_offset_seconds(trimmed, rules)?;
-    let anchor_date = anchor_naive_date()?;
-    let midnight = NaiveTime::from_hms_opt(0, 0, 0)?;
-    let category_start_date =
-        anchor_date.checked_add_signed(Duration::days(category_index as i64))?;
-    let category_start = NaiveDateTime::new(category_start_date, midnight);
-    let local_midnight = match Local.from_local_datetime(&category_start) {
-        LocalResult::Single(dt) => dt,
-        LocalResult::Ambiguous(dt, alt) => dt.min(alt),
-        LocalResult::None => return None,
-    };
-
-    let planned_local = local_midnight + Duration::seconds(slot_offset_seconds);
-    let planned_utc = planned_local.with_timezone(&Utc);
-    let snapped = snap_even_second(planned_utc);
-    let local = snapped.with_timezone(&Local);
-    Some(local.naive_local())
+    let offsets = deterministic_offset_seconds(trimmed, rules)?;
+    let base = fixed_base_datetime_utc()?;
+    let planned_utc = base.checked_sub_signed(Duration::seconds(offsets.total_seconds))?;
+    Some(planned_utc.with_timezone(&Local).naive_local())
 }
 
-fn deterministic_offset_seconds(name: &str, rules: &TimestampRules) -> Option<(usize, i64)> {
+struct DeterministicOffsets {
+    #[cfg(test)]
+    nudge: i64,
+    total_seconds: i64,
+}
+
+fn deterministic_offset_seconds(
+    name: &str,
+    rules: &TimestampRules,
+) -> Option<DeterministicOffsets> {
     let effective = normalize_name_for_rules(name, rules)?;
     let category_index = category_priority_index(&effective, rules)?;
-    let slot = slot_index_within_category(&effective, rules);
-    let name_offset = slot * rules.seconds_between_items_i64();
-    Some((category_index, name_offset))
+    let slot_index = slot_index_within_category(&effective, rules);
+    let seconds_between_items = rules.seconds_between_items_i64();
+    let slots_per_category = rules.slots_per_category_i64();
+    let category_block = slots_per_category.checked_mul(seconds_between_items)?;
+    let category_index_i64 = i64::try_from(category_index).ok()?;
+    let category_offset = category_block.checked_mul(category_index_i64)?;
+    let slot_offset = slot_index.checked_mul(seconds_between_items)?;
+    let nudge = stable_hash01(&effective);
+    let total_seconds = category_offset
+        .checked_add(slot_offset)?
+        .checked_add(nudge)?;
+
+    Some(DeterministicOffsets {
+        #[cfg(test)]
+        nudge,
+        total_seconds,
+    })
 }
 
 fn normalize_name_for_rules(name: &str, rules: &TimestampRules) -> Option<String> {
@@ -369,18 +365,22 @@ fn payload_for_effective(effective: &str, rules: &TimestampRules) -> String {
     }
 }
 
-/// Returns the local anchor date (December 31, 2098) used as the forward-moving baseline
-/// for SAS timestamps.
-fn anchor_naive_date() -> Option<NaiveDate> {
-    NaiveDate::from_ymd_opt(2098, 12, 31)
+fn fixed_base_datetime_utc() -> Option<DateTime<Utc>> {
+    let date = NaiveDate::from_ymd_opt(2099, 1, 1)?;
+    let time = NaiveTime::from_hms_opt(7, 59, 59)?;
+    Some(DateTime::<Utc>::from_naive_utc_and_offset(
+        NaiveDateTime::new(date, time),
+        Utc,
+    ))
 }
 
-fn snap_even_second(dt: DateTime<Utc>) -> DateTime<Utc> {
-    let mut snapped = dt.with_nanosecond(0).unwrap_or(dt);
-    if snapped.second() % 2 == 1 {
-        snapped += Duration::seconds(1);
+fn stable_hash01(value: &str) -> i64 {
+    let mut hash: u32 = 2_166_136_261;
+    for byte in value.bytes() {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(16_777_619);
     }
-    snapped
+    i64::from(hash & 1)
 }
 
 #[cfg(test)]
@@ -389,12 +389,21 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn produces_even_seconds() {
-        let path = PathBuf::from("APP_SAMPLE");
-        let rules = TimestampRules::default();
-        let timestamp = planned_timestamp_for_folder(&path, &rules).expect("timestamp");
-        assert_eq!(timestamp.second() % 2, 0);
-        assert_eq!(timestamp.nanosecond(), 0);
+    fn planned_timestamp_uses_fixed_anchor_and_offsets() {
+        let mut rules = TimestampRules::default();
+        rules.sanitize();
+
+        let name = "APP_SAMPLE";
+        let offsets = deterministic_offset_seconds(name, &rules).expect("offsets");
+        let base = fixed_base_datetime_utc().expect("base timestamp");
+        let expected_utc = base
+            .checked_sub_signed(Duration::seconds(offsets.total_seconds))
+            .expect("expected utc");
+        let expected_local = expected_utc.with_timezone(&Local).naive_local();
+        let planned = planned_timestamp_for_name(name, &rules).expect("planned timestamp");
+
+        assert_eq!(planned, expected_local);
+        assert_eq!(offsets.nudge, 1);
     }
 
     #[test]
@@ -447,7 +456,7 @@ mod tests {
     }
 
     #[test]
-    fn odd_spacing_produces_distinct_consecutive_timestamps() {
+    fn sanitize_preserves_custom_spacing_and_ordering() {
         let mut rules = TimestampRules {
             seconds_between_items: 3,
             slots_per_category: 32,
@@ -457,12 +466,8 @@ mod tests {
             }],
         };
         rules.sanitize();
-        assert!(rules.seconds_between_items >= 2);
-        assert_eq!(rules.seconds_between_items % 2, 0);
-        assert_eq!(
-            rules.slots_per_category,
-            TimestampRules::default_slots_per_category()
-        );
+        assert_eq!(rules.seconds_between_items, 3);
+        assert_eq!(rules.slots_per_category, 32);
 
         let first_name = "A";
         let second_name = "B";
@@ -482,6 +487,23 @@ mod tests {
         let second_timestamp =
             planned_timestamp_for_name(second_name, &rules).expect("second timestamp");
 
-        assert!(second_timestamp > first_timestamp);
+        assert!(second_timestamp < first_timestamp);
+    }
+
+    #[test]
+    fn sanitize_defaults_to_one_second() {
+        let mut rules = TimestampRules {
+            seconds_between_items: 0,
+            slots_per_category: 10,
+            categories: vec![CategoryRule {
+                key: "DEFAULT".to_string(),
+                aliases: Vec::new(),
+            }],
+        };
+
+        rules.sanitize();
+
+        assert_eq!(rules.seconds_between_items, 1);
+        assert_eq!(rules.slots_per_category, 10);
     }
 }

@@ -2918,6 +2918,7 @@ mod tests {
         app.psu_toml_editor.modified = true;
 
         let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx, &app.theme);
 
         let _ = ctx.run(Default::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
