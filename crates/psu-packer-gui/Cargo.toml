@@ -5,9 +5,10 @@ license.workspace = true
 version.workspace = true
 
 [features]
-default = ["psu-toml-editor"]
+default = ["psu-toml-editor", "glow"]
 # The psu.toml editor UI is enabled by default; disable with `--no-default-features` if needed.
 psu-toml-editor = []
+glow = ["eframe/glow"]
 
 [dependencies]
 psu-packer = { path = "../psu-packer" }
