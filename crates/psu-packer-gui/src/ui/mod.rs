@@ -12,8 +12,17 @@ pub(crate) fn centered_column<R>(
     max_width: f32,
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
-    let available = ui.available_width();
-    let width = available.min(max_width);
+    let fallback_available = [ui.available_width(), ui.max_rect().width(), max_width]
+        .into_iter()
+        .find(|width| width.is_finite() && *width > 0.0)
+        .unwrap_or(0.0);
+    let available = fallback_available.max(0.0);
+    let safe_max_width = if max_width.is_finite() {
+        max_width.max(0.0)
+    } else {
+        available
+    };
+    let width = available.min(safe_max_width);
     let margin = ((available - width) * 0.5).max(0.0);
 
     let mut result = None;
