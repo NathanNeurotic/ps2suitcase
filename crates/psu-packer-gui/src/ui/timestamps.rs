@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use chrono::{Local, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use eframe::egui;
 use egui_extras::DatePickerButton;
@@ -326,7 +324,7 @@ pub(crate) fn timestamp_rules_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
         ui,
         "Category order and aliases",
     ));
-    ui.small("Toggle canonical aliases to map known unprefixed names to their categories.");
+    ui.small("Use canonical presets or add custom aliases to map unprefixed names to categories.");
     ui.add_space(6.0);
 
     let mut move_request: Option<(usize, MoveDirection)> = None;
@@ -360,38 +358,115 @@ pub(crate) fn timestamp_rules_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
                     }
                 });
 
-                ui.label("Canonical aliases:");
+                ui.label("Canonical alias presets:");
                 let allowed_aliases = sas_timestamps::canonical_aliases_for_category(&key);
+                let mut current_aliases = app.timestamp_rules.categories[index].aliases.clone();
+
                 if allowed_aliases.is_empty() {
                     ui.small("No canonical aliases are defined for this category.");
                 } else {
-                    let mut selected: HashSet<String> =
-                        category.aliases.iter().cloned().collect();
-
+                    let mut any_selected = false;
                     for alias in allowed_aliases {
-                        let mut is_selected = selected.contains(*alias);
+                        let mut is_selected = current_aliases.iter().any(|current| current == *alias);
                         if ui.checkbox(&mut is_selected, *alias).changed() {
+                            let mut updated = app.timestamp_rules.categories[index].aliases.clone();
                             if is_selected {
-                                selected.insert((*alias).to_string());
+                                if !updated.iter().any(|existing| existing == *alias) {
+                                    updated.push((*alias).to_string());
+                                }
                             } else {
-                                selected.remove(*alias);
+                                updated.retain(|existing| existing != *alias);
                             }
-
-                            let new_selection: Vec<String> = allowed_aliases
-                                .iter()
-                                .filter(|candidate| selected.contains(**candidate))
-                                .map(|candidate| (*candidate).to_string())
-                                .collect();
-                            app.set_timestamp_aliases(index, new_selection);
+                            app.set_timestamp_aliases(index, updated);
+                            current_aliases =
+                                app.timestamp_rules.categories[index].aliases.clone();
+                            is_selected = current_aliases.iter().any(|current| current == *alias);
                         }
+                        any_selected |= is_selected;
                     }
 
-                    if selected.is_empty() {
+                    if !any_selected {
                         let alias_list = allowed_aliases.join(", ");
                         let warning = format!(
-                            "No aliases selected. Unprefixed names ({alias_list}) will fall back to DEFAULT scheduling.",
+                            "No canonical presets are enabled. Only custom aliases will match unprefixed names ({alias_list}).",
                         );
                         ui.colored_label(egui::Color32::from_rgb(229, 115, 115), warning);
+                    }
+                }
+
+                ui.add_space(6.0);
+                ui.separator();
+
+                ui.label("Aliases assigned to this category:");
+                let allowed_aliases = sas_timestamps::canonical_aliases_for_category(&key);
+                let all_aliases = app.timestamp_rules.categories[index].aliases.clone();
+
+                if all_aliases.is_empty() {
+                    ui.small("No aliases configured. Add canonical presets or create custom aliases.");
+                } else {
+                    for alias in &all_aliases {
+                        let alias_label = if allowed_aliases
+                            .iter()
+                            .any(|candidate| *candidate == alias.as_str())
+                        {
+                            alias.clone()
+                        } else {
+                            format!("{alias} (custom)")
+                        };
+
+                        let remove_clicked = ui
+                            .horizontal(|ui| {
+                                ui.label(alias_label);
+                                ui.add_space(6.0);
+                                ui.small_button("Remove").clicked()
+                            })
+                            .inner;
+
+                        if remove_clicked {
+                            let mut updated =
+                                app.timestamp_rules.categories[index].aliases.clone();
+                            updated.retain(|existing| existing != alias);
+                            app.set_timestamp_aliases(index, updated);
+                        }
+                    }
+                }
+
+                ui.add_space(6.0);
+                ui.separator();
+
+                ui.label("Add custom alias:");
+                let mut add_requested = false;
+                let mut new_alias_upper = String::new();
+
+                if let Some(input) = app.timestamp_rules_ui.alias_input_mut(index) {
+                    let response = ui.text_edit_singleline(input);
+                    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        add_requested = true;
+                    }
+                    if ui.button("Add").clicked() {
+                        add_requested = true;
+                    }
+
+                    if add_requested {
+                        let trimmed = input.trim();
+                        if !trimmed.is_empty() {
+                            new_alias_upper = trimmed.to_ascii_uppercase();
+                        }
+                        input.clear();
+                    }
+                }
+
+                if add_requested && !new_alias_upper.is_empty() {
+                    if key != "APPS" && key != "DEFAULT" && new_alias_upper.starts_with(&key) {
+                        new_alias_upper = new_alias_upper[key.len()..].to_string();
+                    }
+
+                    if !new_alias_upper.is_empty() {
+                        let mut updated = app.timestamp_rules.categories[index].aliases.clone();
+                        if !updated.iter().any(|existing| existing == &new_alias_upper) {
+                            updated.push(new_alias_upper);
+                            app.set_timestamp_aliases(index, updated);
+                        }
                     }
                 }
             });

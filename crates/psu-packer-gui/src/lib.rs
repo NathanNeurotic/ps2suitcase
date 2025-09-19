@@ -344,16 +344,33 @@ impl PendingPackAction {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct TimestampRulesUiState;
+pub(crate) struct TimestampRulesUiState {
+    alias_inputs: Vec<String>,
+}
 
 impl TimestampRulesUiState {
-    pub(crate) fn from_rules(_: &TimestampRules) -> Self {
-        Self
+    pub(crate) fn from_rules(rules: &TimestampRules) -> Self {
+        let mut state = Self::default();
+        state.ensure_matches(rules);
+        state
     }
 
-    pub(crate) fn ensure_matches(&mut self, _: &TimestampRules) {}
+    pub(crate) fn ensure_matches(&mut self, rules: &TimestampRules) {
+        let len = rules.categories.len();
+        if self.alias_inputs.len() != len {
+            self.alias_inputs.resize(len, String::new());
+        }
+    }
 
-    fn swap(&mut self, _: usize, _: usize) {}
+    fn swap(&mut self, a: usize, b: usize) {
+        if a < self.alias_inputs.len() && b < self.alias_inputs.len() {
+            self.alias_inputs.swap(a, b);
+        }
+    }
+
+    pub(crate) fn alias_input_mut(&mut self, index: usize) -> Option<&mut String> {
+        self.alias_inputs.get_mut(index)
+    }
 }
 
 pub struct PackerApp {
@@ -789,16 +806,8 @@ impl PackerApp {
 
     pub(crate) fn set_timestamp_aliases(&mut self, index: usize, aliases: Vec<String>) {
         if let Some(category) = self.timestamp_rules.categories.get_mut(index) {
-            let allowed = sas_timestamps::canonical_aliases_for_category(&category.key);
-            let selected: HashSet<&str> = aliases.iter().map(|alias| alias.as_str()).collect();
-            let sanitized: Vec<String> = allowed
-                .iter()
-                .filter(|alias| selected.contains(**alias))
-                .map(|alias| (*alias).to_string())
-                .collect();
-
-            if category.aliases != sanitized {
-                category.aliases = sanitized;
+            if category.aliases != aliases {
+                category.aliases = aliases;
                 self.mark_timestamp_rules_modified();
             }
         }
