@@ -77,12 +77,6 @@ pub(crate) fn canonical_aliases_for_category(key: &str) -> &'static [&'static st
     &[]
 }
 
-fn is_supported_alias(key: &str, alias: &str) -> bool {
-    canonical_aliases_for_category(key)
-        .iter()
-        .any(|candidate| *candidate == alias)
-}
-
 const CHARSET: &str = " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_-.";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -213,10 +207,6 @@ fn sanitize_alias(alias: String, key: &str) -> Option<String> {
     }
 
     if value.is_empty() {
-        return None;
-    }
-
-    if !is_supported_alias(key, &value) {
         return None;
     }
 
@@ -434,25 +424,34 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_aliases_are_removed() {
+    fn custom_aliases_survive_sanitize() {
         let mut rules = TimestampRules::default();
         if let Some(category) = rules
             .categories
             .iter_mut()
-            .find(|category| category.key == "RAA_")
+            .find(|category| category.key == "EMU_")
         {
-            category.aliases = vec!["INVALID".to_string()];
+            category
+                .aliases
+                .extend(["emu_custom".to_string(), "  custom-spaces  ".to_string()]);
         }
 
         rules.sanitize();
 
-        let aliases = rules
+        let category = rules
             .categories
             .iter()
-            .find(|category| category.key == "RAA_")
+            .find(|category| category.key == "EMU_")
             .expect("category");
 
-        assert!(aliases.aliases.is_empty());
+        assert_eq!(category.aliases, vec!["CUSTOM", "CUSTOM-SPACES"]);
+
+        let alias_timestamp =
+            planned_timestamp_for_name("custom", &rules).expect("alias timestamp");
+        let prefixed_timestamp =
+            planned_timestamp_for_name("EMU_CUSTOM", &rules).expect("prefixed timestamp");
+
+        assert_eq!(alias_timestamp, prefixed_timestamp);
     }
 
     #[test]
