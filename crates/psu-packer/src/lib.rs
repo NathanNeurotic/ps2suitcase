@@ -680,40 +680,45 @@ pub fn pack_with_config(folder: &Path, output: &Path, cfg: Config) -> Result<(),
         std::fs::write(&icon_sys_path, bytes)?;
     }
 
-    let raw_included_files = if let Some(include) = include {
-        include
-            .into_iter()
-            .filter_map(|file| {
-                if file.contains(|c| matches!(c, '\\' | '/')) {
-                    eprintln!(
-                        "{} {} {}",
-                        "File".dimmed(),
-                        file.dimmed(),
-                        "exists in subfolder, skipping".dimmed()
-                    );
-                    None
-                } else {
-                    let candidate = folder.join(&file);
-                    if !candidate.exists() {
+    let (raw_included_files, files_sorted) = if let Some(include) = include {
+        (
+            include
+                .into_iter()
+                .filter_map(|file| {
+                    if file.contains(|c| matches!(c, '\\' | '/')) {
                         eprintln!(
                             "{} {} {}",
                             "File".dimmed(),
                             file.dimmed(),
-                            "does not exist, skipping".dimmed()
+                            "exists in subfolder, skipping".dimmed()
                         );
                         None
                     } else {
-                        Some(candidate)
+                        let candidate = folder.join(&file);
+                        if !candidate.exists() {
+                            eprintln!(
+                                "{} {} {}",
+                                "File".dimmed(),
+                                file.dimmed(),
+                                "does not exist, skipping".dimmed()
+                            );
+                            None
+                        } else {
+                            Some(candidate)
+                        }
                     }
-                }
-            })
-            .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>(),
+            false,
+        )
     } else {
-        std::fs::read_dir(folder)?
+        let mut entries = std::fs::read_dir(folder)?
             .into_iter()
             .flatten()
             .map(|d| d.path())
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        entries.sort_by(|a, b| stable_file_key(a).cmp(&stable_file_key(b)));
+        (entries, true)
     };
 
     let mut files = filter_files(&raw_included_files);
@@ -761,7 +766,14 @@ pub fn pack_with_config(folder: &Path, output: &Path, cfg: Config) -> Result<(),
 
     if icon_sys.is_some() {
         if !files.iter().any(|path| path == &icon_sys_path) {
-            files.push(icon_sys_path);
+            if files_sorted {
+                let key = stable_file_key(&icon_sys_path);
+                match files.binary_search_by_key(&key, |path| stable_file_key(path)) {
+                    Ok(idx) | Err(idx) => files.insert(idx, icon_sys_path),
+                }
+            } else {
+                files.push(icon_sys_path);
+            }
         }
     }
 
@@ -779,6 +791,15 @@ fn check_name(name: &str) -> bool {
         }
     }
     true
+}
+
+fn stable_file_key(path: &Path) -> (String, String) {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let lowercase = name.to_ascii_lowercase();
+    (lowercase, name)
 }
 
 fn filter_files(files: &[PathBuf]) -> Vec<PathBuf> {
