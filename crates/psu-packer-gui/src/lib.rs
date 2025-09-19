@@ -2781,18 +2781,19 @@ impl eframe::App for PackerApp {
 
                                 let two_column_layout =
                                     ui.available_width() >= PACK_CONTROLS_TWO_COLUMN_MIN_WIDTH;
+                                let section_gap = 12.0;
                                 if two_column_layout {
                                     ui.columns(2, |columns| {
                                         columns[0].vertical(|ui| {
                                             ui::pack_controls::metadata_section(self, ui);
-                                            ui.add_space(8.0);
+                                            ui.add_space(section_gap);
                                             ui::pack_controls::output_section(self, ui);
                                         });
 
                                         columns[1].vertical(|ui| {
                                             if !showing_psu {
                                                 ui::pack_controls::file_filters_section(self, ui);
-                                                ui.add_space(8.0);
+                                                ui.add_space(section_gap);
                                             }
                                             ui::pack_controls::packaging_section(self, ui);
                                         });
@@ -2801,14 +2802,14 @@ impl eframe::App for PackerApp {
                                     ui::pack_controls::metadata_section(self, ui);
 
                                     if !showing_psu {
-                                        ui.add_space(8.0);
+                                        ui.add_space(section_gap);
                                         ui::pack_controls::file_filters_section(self, ui);
                                     }
 
-                                    ui.add_space(8.0);
+                                    ui.add_space(section_gap);
                                     ui::pack_controls::output_section(self, ui);
 
-                                    ui.add_space(8.0);
+                                    ui.add_space(section_gap);
                                     ui::pack_controls::packaging_section(self, ui);
                                 }
                             });
