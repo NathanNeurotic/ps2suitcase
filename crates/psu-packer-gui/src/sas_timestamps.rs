@@ -154,7 +154,13 @@ impl TimestampRules {
         self.seconds_between_items = next_even.min(max_even) as u32;
         // Slots per category are pinned to a single local day worth of two-second slots so
         // each category can occupy its own date on the timeline.
-        self.slots_per_category = Self::default_slots_per_category();
+        let max_slots = Self::default_slots_per_category();
+        let min_slots = 1;
+        if self.slots_per_category == 0 {
+            self.slots_per_category = max_slots;
+        } else {
+            self.slots_per_category = self.slots_per_category.clamp(min_slots, max_slots);
+        }
 
         if self.categories.is_empty() {
             *self = Self::default();
@@ -459,10 +465,7 @@ mod tests {
         rules.sanitize();
         assert!(rules.seconds_between_items >= 2);
         assert_eq!(rules.seconds_between_items % 2, 0);
-        assert_eq!(
-            rules.slots_per_category,
-            TimestampRules::default_slots_per_category()
-        );
+        assert_eq!(rules.slots_per_category, 32);
 
         let first_name = "A";
         let second_name = "B";
@@ -483,5 +486,20 @@ mod tests {
             planned_timestamp_for_name(second_name, &rules).expect("second timestamp");
 
         assert!(second_timestamp > first_timestamp);
+    }
+
+    #[test]
+    fn custom_slots_survive_round_trip() {
+        let mut rules = TimestampRules::default();
+        rules.slots_per_category = 1_000;
+        rules.sanitize();
+        assert_eq!(rules.slots_per_category, 1_000);
+
+        let serialized = serde_json::to_string(&rules).expect("serialize timestamp rules");
+        let mut round_trip: TimestampRules =
+            serde_json::from_str(&serialized).expect("deserialize timestamp rules");
+        round_trip.sanitize();
+
+        assert_eq!(round_trip.slots_per_category, 1_000);
     }
 }
