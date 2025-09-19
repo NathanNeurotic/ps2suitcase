@@ -14,13 +14,17 @@ fn main() -> eframe::Result<()> {
         Err(wgpu_error) => {
             report_renderer_error("WGPU", &wgpu_error);
 
-            let glow_result = run_app_with_renderer(Renderer::Glow);
-            match glow_result {
-                Ok(result) => Ok(result),
-                Err(glow_error) => {
-                    report_renderer_error("Glow", &glow_error);
-                    Err(wgpu_error)
+            if cfg!(feature = "eframe/glow") {
+                let glow_result = run_app_with_renderer(Renderer::Glow);
+                match glow_result {
+                    Ok(result) => Ok(result),
+                    Err(glow_error) => {
+                        report_renderer_error("Glow", &glow_error);
+                        Err(wgpu_error)
+                    }
                 }
+            } else {
+                Err(wgpu_error)
             }
         }
     }
