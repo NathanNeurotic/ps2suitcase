@@ -13,22 +13,32 @@ pub(crate) fn centered_column<R>(
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
     let epsilon = f32::EPSILON;
+    let explicit_max = if max_width.is_finite() && max_width > epsilon {
+        Some(max_width)
+    } else {
+        None
+    };
+
     let primary_available = ui.available_width();
     let available = if primary_available.is_finite() && primary_available > epsilon {
         primary_available
     } else {
         let fallback_available = ui.max_rect().width();
+        let fallback_cap = explicit_max.unwrap_or(fallback_available);
+
         if fallback_available.is_finite() && fallback_available > epsilon {
             fallback_available
-        } else if max_width.is_finite() && max_width > epsilon {
-            max_width
+                .min(fallback_cap.max(epsilon))
+                .max(epsilon)
+        } else if fallback_cap.is_finite() && fallback_cap > epsilon {
+            fallback_cap
         } else {
             epsilon
         }
     };
 
-    let safe_max_width = if max_width.is_finite() && max_width > epsilon {
-        max_width
+    let safe_max_width = if let Some(max) = explicit_max {
+        max
     } else {
         available
     };
