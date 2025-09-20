@@ -27,15 +27,65 @@ pub(crate) fn centered_column<R>(
         }
     };
 
-    let primary_available = sanitize(ui.available_width());
-    let max_rect_available = sanitize(ui.max_rect().width());
+    let mut sanitized_hints: Vec<f32> = Vec::new();
+
+    let mut primary_available = sanitize(ui.available_width());
+    if let Some(value) = primary_available {
+        sanitized_hints.push(value);
+    }
+
+    let mut max_rect_available = sanitize(ui.max_rect().width());
+    if let Some(value) = max_rect_available {
+        sanitized_hints.push(value);
+    }
+
+    let mut clip_available = sanitize(ui.clip_rect().width());
+    if let Some(value) = clip_available {
+        sanitized_hints.push(value);
+    }
+
+    let mut screen_available = sanitize(ui.ctx().screen_rect().width());
+    if let Some(value) = screen_available {
+        sanitized_hints.push(value);
+    }
+
     let explicit_cap = explicit_max.and_then(|max| sanitize(max));
+    if let Some(value) = explicit_cap {
+        sanitized_hints.push(value);
+    }
+
+    let plausibility_floor = sanitized_hints
+        .iter()
+        .copied()
+        .fold(0.0, f32::max)
+        .mul_add(0.1, 0.0);
+
+    let discard_if_implausible = |value: &mut Option<f32>| {
+        if let Some(inner) = value {
+            if plausibility_floor > epsilon && *inner < plausibility_floor {
+                *value = None;
+            }
+        }
+    };
+
+    discard_if_implausible(&mut primary_available);
+    discard_if_implausible(&mut max_rect_available);
+    discard_if_implausible(&mut clip_available);
+    discard_if_implausible(&mut screen_available);
 
     let available = if let Some(primary) = primary_available {
         let mut candidate = primary;
 
         if let Some(max_rect) = max_rect_available {
             candidate = candidate.min(max_rect);
+        }
+
+        if let Some(clip) = clip_available {
+            candidate = candidate.min(clip);
+        }
+
+        if let Some(screen) = screen_available {
+            candidate = candidate.min(screen);
         }
 
         if let Some(cap) = explicit_cap {
@@ -45,6 +95,14 @@ pub(crate) fn centered_column<R>(
         candidate
     } else if let Some(max_rect) = max_rect_available {
         let mut candidate = max_rect;
+
+        if let Some(clip) = clip_available {
+            candidate = candidate.min(clip);
+        }
+
+        if let Some(screen) = screen_available {
+            candidate = candidate.min(screen);
+        }
 
         if let Some(cap) = explicit_cap {
             candidate = candidate.min(cap);
@@ -59,8 +117,21 @@ pub(crate) fn centered_column<R>(
 
     let safe_max_width = explicit_cap.unwrap_or(available);
 
-    let width = available.min(safe_max_width).max(epsilon);
-    let margin = ((available - width) * 0.5).max(0.0);
+    let viewport_width = clip_available
+        .or(screen_available)
+        .or(max_rect_available)
+        .or(Some(available));
+
+    let minimum_reasonable = ui.spacing().interact_size.x;
+    let effective_floor = viewport_width
+        .map(|view| view.min(minimum_reasonable))
+        .unwrap_or(minimum_reasonable)
+        .min(safe_max_width);
+
+    let clamped_available = available.max(effective_floor);
+
+    let width = clamped_available.min(safe_max_width).max(epsilon);
+    let margin = ((clamped_available - width) * 0.5).max(0.0);
 
     let mut result = None;
     ui.horizontal(|ui| {
