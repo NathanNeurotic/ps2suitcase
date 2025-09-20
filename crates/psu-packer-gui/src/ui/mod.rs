@@ -19,29 +19,45 @@ pub(crate) fn centered_column<R>(
         None
     };
 
-    let primary_available = ui.available_width();
-    let available = if primary_available.is_finite() && primary_available > epsilon {
-        primary_available
-    } else {
-        let fallback_available = ui.max_rect().width();
-        let fallback_cap = explicit_max.unwrap_or(fallback_available);
-
-        if fallback_available.is_finite() && fallback_available > epsilon {
-            fallback_available
-                .min(fallback_cap.max(epsilon))
-                .max(epsilon)
-        } else if fallback_cap.is_finite() && fallback_cap > epsilon {
-            fallback_cap
+    let sanitize = |value: f32| -> Option<f32> {
+        if value.is_finite() && value > epsilon {
+            Some(value)
         } else {
-            epsilon
+            None
         }
     };
 
-    let safe_max_width = if let Some(max) = explicit_max {
-        max
+    let primary_available = sanitize(ui.available_width());
+    let max_rect_available = sanitize(ui.max_rect().width());
+    let explicit_cap = explicit_max.and_then(|max| sanitize(max));
+
+    let available = if let Some(primary) = primary_available {
+        let mut candidate = primary;
+
+        if let Some(max_rect) = max_rect_available {
+            candidate = candidate.min(max_rect);
+        }
+
+        if let Some(cap) = explicit_cap {
+            candidate = candidate.min(cap);
+        }
+
+        candidate
+    } else if let Some(max_rect) = max_rect_available {
+        let mut candidate = max_rect;
+
+        if let Some(cap) = explicit_cap {
+            candidate = candidate.min(cap);
+        }
+
+        candidate
+    } else if let Some(cap) = explicit_cap {
+        cap
     } else {
-        available
+        epsilon
     };
+
+    let safe_max_width = explicit_cap.unwrap_or(available);
 
     let width = available.min(safe_max_width).max(epsilon);
     let margin = ((available - width) * 0.5).max(0.0);
