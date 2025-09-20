@@ -2317,6 +2317,7 @@ fn text_editor_ui(
     if show_editor {
         let response = egui::ScrollArea::vertical()
             .id_source(format!("{file_name}_editor_scroll"))
+            .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.add_enabled(
                     editing_enabled,
@@ -2386,6 +2387,7 @@ fn title_cfg_form_ui(
 
         egui::ScrollArea::vertical()
             .id_source("title_cfg_form_scroll")
+            .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui::centered_column(ui, CENTERED_COLUMN_MAX_WIDTH, |ui| {
                     if !missing_fields.is_empty() {
@@ -2776,7 +2778,9 @@ impl eframe::App for PackerApp {
 
                 match self.editor_tab {
                     EditorTab::PsuSettings => {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
                             ui::centered_column(ui, CENTERED_COLUMN_MAX_WIDTH, |ui| {
                                 ui::file_picker::folder_section(self, ui);
 
@@ -2887,14 +2891,18 @@ impl eframe::App for PackerApp {
                         }
                     }
                     EditorTab::IconSys => {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
                             ui::centered_column(ui, CENTERED_COLUMN_MAX_WIDTH, |ui| {
                                 ui::icon_sys::icon_sys_editor(self, ui);
                             });
                         });
                     }
                     EditorTab::TimestampAuto => {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
                             ui::centered_column(ui, CENTERED_COLUMN_MAX_WIDTH, |ui| {
                                 ui::timestamps::timestamp_rules_editor(self, ui);
                             });
