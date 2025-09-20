@@ -12,22 +12,33 @@ pub(crate) fn centered_column<R>(
     max_width: f32,
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
-    let fallback_available = [ui.available_width(), ui.max_rect().width(), max_width]
-        .into_iter()
-        .find(|width| width.is_finite() && *width > 0.0)
-        .unwrap_or(0.0);
-    let available = fallback_available.max(0.0);
-    let safe_max_width = if max_width.is_finite() {
-        max_width.max(0.0)
+    let epsilon = f32::EPSILON;
+    let primary_available = ui.available_width();
+    let available = if primary_available.is_finite() && primary_available > epsilon {
+        primary_available
+    } else {
+        let fallback_available = ui.max_rect().width();
+        if fallback_available.is_finite() && fallback_available > epsilon {
+            fallback_available
+        } else if max_width.is_finite() && max_width > epsilon {
+            max_width
+        } else {
+            epsilon
+        }
+    };
+
+    let safe_max_width = if max_width.is_finite() && max_width > epsilon {
+        max_width
     } else {
         available
     };
-    let width = available.min(safe_max_width);
+
+    let width = available.min(safe_max_width).max(epsilon);
     let margin = ((available - width) * 0.5).max(0.0);
 
     let mut result = None;
     ui.horizontal(|ui| {
-        if margin > 0.0 {
+        if margin > epsilon {
             ui.add_space(margin);
         }
 
@@ -42,7 +53,7 @@ pub(crate) fn centered_column<R>(
             .inner,
         );
 
-        if margin > 0.0 {
+        if margin > epsilon {
             ui.add_space(margin);
         }
     });
