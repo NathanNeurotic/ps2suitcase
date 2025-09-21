@@ -76,7 +76,7 @@ pub(crate) fn centered_column<R>(
     discard_if_implausible(&mut clip_available);
     discard_if_implausible(&mut screen_available);
 
-    let available = if let Some(primary) = primary_available {
+    let unclamped_available = if let Some(primary) = primary_available {
         let mut candidate = primary;
 
         if let Some(max_rect) = max_rect_available {
@@ -91,10 +91,6 @@ pub(crate) fn centered_column<R>(
             candidate = candidate.min(screen);
         }
 
-        if let Some(cap) = explicit_cap {
-            candidate = candidate.min(cap);
-        }
-
         candidate
     } else if let Some(max_rect) = max_rect_available {
         let mut candidate = max_rect;
@@ -107,34 +103,37 @@ pub(crate) fn centered_column<R>(
             candidate = candidate.min(screen);
         }
 
-        if let Some(cap) = explicit_cap {
-            candidate = candidate.min(cap);
-        }
-
         candidate
+    } else if let Some(screen) = screen_available {
+        screen
     } else if let Some(cap) = explicit_cap {
         cap
     } else {
         epsilon
     };
 
-    let safe_max_width = explicit_cap.unwrap_or(available);
+    let available = explicit_cap
+        .map(|cap| unclamped_available.min(cap))
+        .unwrap_or(unclamped_available);
 
     let viewport_width = clip_available
         .or(screen_available)
         .or(max_rect_available)
-        .or(Some(available));
+        .or(Some(unclamped_available));
 
     let minimum_reasonable = ui.spacing().interact_size.x;
     let effective_floor = viewport_width
         .map(|view| view.min(minimum_reasonable))
-        .unwrap_or(minimum_reasonable)
-        .min(safe_max_width);
+        .unwrap_or(minimum_reasonable);
 
-    let clamped_available = available.max(effective_floor);
-
-    let width = clamped_available.min(safe_max_width).max(epsilon);
-    let margin = ((clamped_available - width) * 0.5).max(0.0);
+    let inner_max_width = explicit_cap.unwrap_or(f32::INFINITY);
+    let width = available
+        .max(effective_floor)
+        .min(inner_max_width)
+        .max(epsilon);
+    let margin = viewport_width
+        .map(|view| ((view - width) * 0.5).max(0.0))
+        .unwrap_or(0.0);
 
     let mut result = None;
     ui.horizontal(|ui| {
