@@ -116,13 +116,35 @@ pub(crate) fn centered_column<R>(
         .map(|cap| unclamped_available.min(cap))
         .unwrap_or(unclamped_available);
 
+    let working_bound = if explicit_cap.is_some() {
+        available
+    } else {
+        unclamped_available
+    };
+
+    let bound_to_working_width = |value: &mut Option<f32>| {
+        if let Some(inner) = value {
+            if inner.is_finite() {
+                *inner = inner.min(working_bound);
+            } else {
+                *value = Some(working_bound);
+            }
+        }
+    };
+
+    bound_to_working_width(&mut clip_available);
+    bound_to_working_width(&mut screen_available);
+    bound_to_working_width(&mut max_rect_available);
+
     let viewport_width = clip_available
         .or(screen_available)
         .or(max_rect_available)
-        .or(Some(unclamped_available));
+        .or(Some(working_bound));
 
     let minimum_reasonable = ui.spacing().interact_size.x;
-    let effective_floor = viewport_width
+    let bounded_viewport_width = viewport_width.map(|view| view.min(working_bound));
+
+    let effective_floor = bounded_viewport_width
         .map(|view| view.min(minimum_reasonable))
         .unwrap_or(minimum_reasonable);
 
@@ -131,7 +153,7 @@ pub(crate) fn centered_column<R>(
         .max(effective_floor)
         .min(inner_max_width)
         .max(epsilon);
-    let margin = viewport_width
+    let margin = bounded_viewport_width
         .map(|view| ((view - width) * 0.5).max(0.0))
         .unwrap_or(0.0);
 
