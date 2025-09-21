@@ -27,36 +27,32 @@ pub(crate) fn centered_column<R>(
         }
     };
 
-    let mut sanitized_hints: Vec<f32> = Vec::new();
+    let mut runtime_hints: Vec<f32> = Vec::new();
 
     let minimum_reasonable = ui.spacing().interact_size.x;
 
     let mut primary_available = sanitize(ui.available_width());
     if let Some(value) = primary_available {
-        sanitized_hints.push(value);
+        runtime_hints.push(value);
     }
 
     let mut max_rect_available = sanitize(ui.max_rect().width());
     if let Some(value) = max_rect_available {
-        sanitized_hints.push(value);
+        runtime_hints.push(value);
     }
 
     let mut clip_available = sanitize(ui.clip_rect().width());
     if let Some(value) = clip_available {
-        sanitized_hints.push(value);
+        runtime_hints.push(value);
     }
 
     let mut screen_available = sanitize(ui.ctx().screen_rect().width());
     if let Some(value) = screen_available {
-        sanitized_hints.push(value);
+        runtime_hints.push(value);
     }
 
     let explicit_cap = explicit_max.and_then(|max| sanitize(max));
-    if let Some(value) = explicit_cap {
-        sanitized_hints.push(value);
-    }
-
-    let plausibility_baseline = sanitized_hints
+    let plausibility_baseline = runtime_hints
         .iter()
         .copied()
         .fold(f32::NEG_INFINITY, f32::max);
@@ -69,10 +65,16 @@ pub(crate) fn centered_column<R>(
         minimum_plausibility
     };
 
+    let allow_runtime_discard = runtime_hints
+        .iter()
+        .any(|&value| value >= plausibility_threshold);
+
     let discard_if_implausible = |value: &mut Option<f32>| {
-        if let Some(inner) = value {
-            if !inner.is_finite() || *inner < plausibility_threshold {
-                *value = None;
+        if allow_runtime_discard {
+            if let Some(inner) = value {
+                if !inner.is_finite() || *inner < plausibility_threshold {
+                    *value = None;
+                }
             }
         }
     };
