@@ -2679,11 +2679,9 @@ impl eframe::App for PackerApp {
 
         egui::CentralPanel::default()
             .frame(
-                egui::Frame::new()
+                egui::Frame::default()
                     .inner_margin(egui::Margin::same(0))
-                    .outer_margin(egui::Margin::same(0))
-                    .fill(self.theme.panel)
-                    .stroke(egui::Stroke::NONE),
+                    .fill(self.theme.panel),
             )
             .show(ctx, |ui| {
                 let rect = ui.max_rect();
