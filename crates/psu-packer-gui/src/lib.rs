@@ -526,10 +526,18 @@ impl Default for PackerApp {
     }
 }
 
+fn sanitize_zoom(value: f32) -> f32 {
+    if !value.is_finite() || value <= 0.0 {
+        1.0
+    } else {
+        value
+    }
+}
+
 impl PackerApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let mut app = Self::default();
-        app.zoom_factor = cc.egui_ctx.pixels_per_point();
+        app.zoom_factor = sanitize_zoom(cc.egui_ctx.pixels_per_point());
         theme::install(&cc.egui_ctx, &app.theme);
         app
     }
@@ -2590,6 +2598,7 @@ impl eframe::App for PackerApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
 
+        self.zoom_factor = sanitize_zoom(self.zoom_factor);
         self.zoom_factor = self.zoom_factor.clamp(0.5, 2.0);
         ctx.set_pixels_per_point(self.zoom_factor);
 
@@ -2923,6 +2932,16 @@ mod tests {
     use psu_packer::IconSysFlags;
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn sanitize_zoom_handles_non_finite_and_non_positive_values() {
+        assert_eq!(sanitize_zoom(f32::NAN), 1.0);
+        assert_eq!(sanitize_zoom(f32::INFINITY), 1.0);
+        assert_eq!(sanitize_zoom(f32::NEG_INFINITY), 1.0);
+        assert_eq!(sanitize_zoom(0.0), 1.0);
+        assert_eq!(sanitize_zoom(-1.0), 1.0);
+        assert_eq!(sanitize_zoom(1.5), 1.5);
+    }
 
     #[cfg(feature = "psu-toml-editor")]
     #[test]
