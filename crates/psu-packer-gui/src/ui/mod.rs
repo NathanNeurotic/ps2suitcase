@@ -27,88 +27,21 @@ pub(crate) fn centered_column<R>(
         }
     };
 
-    let mut runtime_hints: Vec<f32> = Vec::new();
-
     let minimum_reasonable = ui.spacing().interact_size.x;
 
-    let mut primary_available = sanitize(ui.available_width());
-    if let Some(value) = primary_available {
-        runtime_hints.push(value);
-    }
-
-    let mut max_rect_available = sanitize(ui.max_rect().width());
-    if let Some(value) = max_rect_available {
-        runtime_hints.push(value);
-    }
-
-    let mut clip_available = sanitize(ui.clip_rect().width());
-    if let Some(value) = clip_available {
-        runtime_hints.push(value);
-    }
-
-    let mut screen_available = sanitize(ui.ctx().screen_rect().width());
-    if let Some(value) = screen_available {
-        runtime_hints.push(value);
-    }
-
     let explicit_cap = explicit_max.and_then(|max| sanitize(max));
-    let plausibility_baseline = runtime_hints
-        .iter()
-        .copied()
-        .fold(f32::NEG_INFINITY, f32::max);
+    let mut hint_values = [
+        sanitize(ui.available_width()),
+        sanitize(ui.max_rect().width()),
+        sanitize(ui.clip_rect().width()),
+        sanitize(ui.ctx().screen_rect().width()),
+    ];
 
-    let minimum_plausibility = (minimum_reasonable * 0.1).max(epsilon);
+    let (unclamped_available, available) =
+        reconcile_runtime_hints(&mut hint_values, explicit_cap, minimum_reasonable, epsilon);
 
-    let plausibility_threshold = if plausibility_baseline.is_finite() {
-        (plausibility_baseline * 0.1).max(minimum_plausibility)
-    } else {
-        minimum_plausibility
-    };
-
-    let allow_runtime_discard = runtime_hints
-        .iter()
-        .any(|&value| value >= plausibility_threshold);
-
-    let discard_if_implausible = |value: &mut Option<f32>| {
-        if allow_runtime_discard {
-            if let Some(inner) = value {
-                if !inner.is_finite() || *inner < plausibility_threshold {
-                    *value = None;
-                }
-            }
-        }
-    };
-
-    discard_if_implausible(&mut primary_available);
-    discard_if_implausible(&mut max_rect_available);
-    discard_if_implausible(&mut clip_available);
-    discard_if_implausible(&mut screen_available);
-
-    let unclamped_available = {
-        let mut aggregated_hint: Option<f32> = None;
-
-        for value in [
-            primary_available,
-            max_rect_available,
-            clip_available,
-            screen_available,
-        ] {
-            if let Some(inner) = value {
-                aggregated_hint = Some(match aggregated_hint {
-                    Some(current) => current.min(inner),
-                    None => inner,
-                });
-            }
-        }
-
-        aggregated_hint
-            .or(explicit_cap)
-            .unwrap_or_else(|| minimum_reasonable.max(epsilon))
-    };
-
-    let available = explicit_cap
-        .map(|cap| unclamped_available.min(cap))
-        .unwrap_or(unclamped_available);
+    let [_primary_available, mut max_rect_available, mut clip_available, mut screen_available] =
+        hint_values;
 
     let working_bound = if explicit_cap.is_some() {
         available
@@ -173,4 +106,101 @@ pub(crate) fn centered_column<R>(
     });
 
     result.expect("centered_column should always produce a result")
+}
+
+fn reconcile_runtime_hints(
+    hints: &mut [Option<f32>],
+    explicit_cap: Option<f32>,
+    minimum_reasonable: f32,
+    epsilon: f32,
+) -> (f32, f32) {
+    let mut sanitized_values: Vec<f32> = hints.iter().filter_map(|opt| *opt).collect();
+
+    let plausibility_baseline = sanitized_values
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
+
+    let minimum_plausibility = (minimum_reasonable * 0.1).max(epsilon);
+
+    let plausibility_threshold = if plausibility_baseline.is_finite() {
+        (plausibility_baseline * 0.1).max(minimum_plausibility)
+    } else {
+        minimum_plausibility
+    };
+
+    let plausible_count = sanitized_values
+        .iter()
+        .filter(|&&value| value >= plausibility_threshold)
+        .count();
+
+    let allow_runtime_discard = plausible_count >= 2;
+    let treat_single_outlier_as_implausible = plausible_count == 1;
+
+    for value in hints.iter_mut() {
+        if let Some(inner) = value {
+            if !inner.is_finite()
+                || (allow_runtime_discard && *inner < plausibility_threshold)
+                || (treat_single_outlier_as_implausible && *inner >= plausibility_threshold)
+            {
+                *value = None;
+            }
+        }
+    }
+
+    sanitized_values = hints.iter().filter_map(|opt| *opt).collect();
+
+    let mut aggregated_hint: Option<f32> = None;
+
+    for value in sanitized_values {
+        aggregated_hint = Some(match aggregated_hint {
+            Some(current) => current.min(value),
+            None => value,
+        });
+    }
+
+    let unclamped_available = aggregated_hint
+        .or(explicit_cap)
+        .unwrap_or_else(|| minimum_reasonable.max(epsilon));
+
+    let available = explicit_cap
+        .map(|cap| unclamped_available.min(cap))
+        .unwrap_or(unclamped_available);
+
+    (unclamped_available, available)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filters_single_implausible_outlier() {
+        let explicit_cap = Some(1180.0);
+        let minimum_reasonable = 16.0;
+        let epsilon = f32::EPSILON;
+
+        let mut hints = [
+            Some(1.5_f32),
+            Some(1.5_f32),
+            Some(0.5_f32),
+            Some(16384.0_f32),
+        ];
+
+        let (unclamped_available, available) =
+            reconcile_runtime_hints(&mut hints, explicit_cap, minimum_reasonable, epsilon);
+
+        assert!(
+            hints[3].is_none(),
+            "expected the implausible outlier to be discarded"
+        );
+        assert!(
+            available < explicit_cap.unwrap(),
+            "available width should not fall back to the max-width cap"
+        );
+        assert!(
+            unclamped_available <= 1.5,
+            "unclamped width should be driven by the surviving viewport hints"
+        );
+    }
 }
