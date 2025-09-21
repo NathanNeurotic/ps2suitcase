@@ -5,12 +5,12 @@ edition = "2021"
 
 [features]
 default = ["glow", "wgpu"]
-glow = ["eframe/glow"]
+glow = []
 wgpu = ["eframe/wgpu"]
 
 [dependencies]
 macros = { path = "../macros" }
-eframe = { version = "0.31.1", default-features = false, features = ["persistence"] }
+eframe = { version = "0.31.1", features = ["default", "persistence"] }
 egui_extras = { version = "0.31.1", features = ["svg", "image"] }
 egui_dock = "0.16.0"
 cgmath = "0.18.0"
