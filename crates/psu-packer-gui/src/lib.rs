@@ -8,7 +8,7 @@ use std::{
 
 use crate::ui::theme;
 use chrono::NaiveDateTime;
-use eframe::egui;
+use eframe::egui::{self, Widget};
 use ps2_filetypes::{sjis, templates, IconSys, PSUEntryKind, TitleCfg, PSU};
 use psu_packer::{ColorConfig, ColorFConfig, IconSysConfig, VectorConfig};
 use tempfile::{tempdir, TempDir};
@@ -262,7 +262,7 @@ impl Default for TimestampStrategy {
 enum EditorTab {
     PsuSettings,
     #[cfg(feature = "psu-toml-editor")]
-    /// psu.toml editor tab (enabled by default; disable with `--no-default-features`).
+    /// Enable the psu.toml editor again with `--features psu-toml-editor`.
     PsuToml,
     TitleCfg,
     IconSys,
@@ -344,33 +344,16 @@ impl PendingPackAction {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct TimestampRulesUiState {
-    alias_inputs: Vec<String>,
-}
+pub(crate) struct TimestampRulesUiState;
 
 impl TimestampRulesUiState {
-    pub(crate) fn from_rules(rules: &TimestampRules) -> Self {
-        let mut state = Self::default();
-        state.ensure_matches(rules);
-        state
+    pub(crate) fn from_rules(_: &TimestampRules) -> Self {
+        Self
     }
 
-    pub(crate) fn ensure_matches(&mut self, rules: &TimestampRules) {
-        let len = rules.categories.len();
-        if self.alias_inputs.len() != len {
-            self.alias_inputs.resize(len, String::new());
-        }
-    }
+    pub(crate) fn ensure_matches(&mut self, _: &TimestampRules) {}
 
-    fn swap(&mut self, a: usize, b: usize) {
-        if a < self.alias_inputs.len() && b < self.alias_inputs.len() {
-            self.alias_inputs.swap(a, b);
-        }
-    }
-
-    pub(crate) fn alias_input_mut(&mut self, index: usize) -> Option<&mut String> {
-        self.alias_inputs.get_mut(index)
-    }
+    fn swap(&mut self, _: usize, _: usize) {}
 }
 
 pub struct PackerApp {
@@ -526,18 +509,10 @@ impl Default for PackerApp {
     }
 }
 
-fn sanitize_zoom(value: f32) -> f32 {
-    if !value.is_finite() || value <= 0.0 {
-        1.0
-    } else {
-        value
-    }
-}
-
 impl PackerApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let mut app = Self::default();
-        app.zoom_factor = sanitize_zoom(cc.egui_ctx.pixels_per_point());
+        app.zoom_factor = cc.egui_ctx.pixels_per_point();
         theme::install(&cc.egui_ctx, &app.theme);
         app
     }
@@ -634,13 +609,17 @@ impl PackerApp {
         alert: bool,
         font: &egui::FontId,
     ) {
-        let mut text = egui::RichText::new(label.to_owned()).font(font.clone());
-        if alert && self.editor_tab != tab {
-            text = text.color(self.theme.neon_accent);
+        let widget = EditorTabWidget::new(
+            label,
+            font.clone(),
+            &self.theme,
+            self.editor_tab == tab,
+            alert,
+        );
+        let response = ui.add(widget);
+        if response.clicked() {
+            self.editor_tab = tab;
         }
-
-        ui.selectable_value(&mut self.editor_tab, tab, text)
-            .on_hover_cursor(egui::CursorIcon::PointingHand);
     }
 
     pub(crate) fn load_timestamp_rules_from_folder(&mut self, folder: &Path) {
@@ -814,8 +793,16 @@ impl PackerApp {
 
     pub(crate) fn set_timestamp_aliases(&mut self, index: usize, aliases: Vec<String>) {
         if let Some(category) = self.timestamp_rules.categories.get_mut(index) {
-            if category.aliases != aliases {
-                category.aliases = aliases;
+            let allowed = sas_timestamps::canonical_aliases_for_category(&category.key);
+            let selected: HashSet<&str> = aliases.iter().map(|alias| alias.as_str()).collect();
+            let sanitized: Vec<String> = allowed
+                .iter()
+                .filter(|alias| selected.contains(**alias))
+                .map(|alias| (*alias).to_string())
+                .collect();
+
+            if category.aliases != sanitized {
+                category.aliases = sanitized;
                 self.mark_timestamp_rules_modified();
             }
         }
@@ -2325,7 +2312,6 @@ fn text_editor_ui(
     if show_editor {
         let response = egui::ScrollArea::vertical()
             .id_source(format!("{file_name}_editor_scroll"))
-            .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.add_enabled(
                     editing_enabled,
@@ -2395,7 +2381,6 @@ fn title_cfg_form_ui(
 
         egui::ScrollArea::vertical()
             .id_source("title_cfg_form_scroll")
-            .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui::centered_column(ui, CENTERED_COLUMN_MAX_WIDTH, |ui| {
                     if !missing_fields.is_empty() {
@@ -2598,7 +2583,6 @@ impl eframe::App for PackerApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
 
-        self.zoom_factor = sanitize_zoom(self.zoom_factor);
         self.zoom_factor = self.zoom_factor.clamp(0.5, 2.0);
         ctx.set_pixels_per_point(self.zoom_factor);
 
@@ -2621,27 +2605,20 @@ impl eframe::App for PackerApp {
                         ui.label(
                             egui::RichText::new("Packing PSU…")
                                 .font(theme::display_font(26.0))
-                                .color(self.theme.text_primary),
+                                .color(self.theme.neon_accent),
                         );
                         ui.add_space(8.0);
                         ui.add(
                             egui::ProgressBar::new(progress)
                                 .desired_width(200.0)
-                                .animate(true)
-                                .fill(self.theme.neon_accent),
+                                .animate(true),
                         );
                     });
                 });
         }
 
         egui::TopBottomPanel::top("top_panel")
-            .frame(
-                egui::Frame::new()
-                    .inner_margin(egui::Margin::same(0))
-                    .outer_margin(egui::Margin::same(0))
-                    .fill(self.theme.panel)
-                    .stroke(egui::Stroke::NONE),
-            )
+            .frame(egui::Frame::none().fill(self.theme.background))
             .show(ctx, |ui| {
                 let rect = ui.max_rect();
                 theme::draw_vertical_gradient(
@@ -2678,11 +2655,7 @@ impl eframe::App for PackerApp {
             });
 
         egui::CentralPanel::default()
-            .frame(
-                egui::Frame::default()
-                    .inner_margin(egui::Margin::same(0))
-                    .fill(self.theme.panel),
-            )
+            .frame(egui::Frame::none().fill(self.theme.background))
             .show(ctx, |ui| {
                 let rect = ui.max_rect();
                 theme::draw_vertical_gradient(
@@ -2700,82 +2673,65 @@ impl eframe::App for PackerApp {
                 ui.add_space(8.0);
 
                 let tab_font = theme::display_font(18.0);
-                let tab_bar = egui::ScrollArea::horizontal()
-                    .id_source("editor_tabs_scroll")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            let previous_spacing = {
-                                let spacing = ui.spacing_mut();
-                                let old = spacing.item_spacing;
-                                spacing.item_spacing.x = 12.0;
-                                spacing.item_spacing.y = 8.0;
-                                old
-                            };
+                let tab_bar = ui.horizontal_wrapped(|ui| {
+                    let spacing = ui.spacing_mut();
+                    spacing.item_spacing.x = 12.0;
+                    spacing.item_spacing.y = 8.0;
 
-                            self.editor_tab_button(
-                                ui,
-                                EditorTab::PsuSettings,
-                                "PSU Settings",
-                                false,
-                                &tab_font,
-                            );
+                    self.editor_tab_button(
+                        ui,
+                        EditorTab::PsuSettings,
+                        "PSU Settings",
+                        false,
+                        &tab_font,
+                    );
 
-                            #[cfg(feature = "psu-toml-editor")]
-                            {
-                                let psu_toml_label = if self.psu_toml_editor.modified {
-                                    "psu.toml*"
-                                } else {
-                                    "psu.toml"
-                                };
-                                self.editor_tab_button(
-                                    ui,
-                                    EditorTab::PsuToml,
-                                    psu_toml_label,
-                                    self.psu_toml_editor.modified,
-                                    &tab_font,
-                                );
-                            }
+                    #[cfg(feature = "psu-toml-editor")]
+                    {
+                        let psu_toml_label = if self.psu_toml_editor.modified {
+                            "psu.toml*"
+                        } else {
+                            "psu.toml"
+                        };
+                        self.editor_tab_button(
+                            ui,
+                            EditorTab::PsuToml,
+                            psu_toml_label,
+                            self.psu_toml_editor.modified,
+                            &tab_font,
+                        );
+                    }
 
-                            let title_cfg_label = if self.title_cfg_editor.modified {
-                                "title.cfg*"
-                            } else {
-                                "title.cfg"
-                            };
-                            self.editor_tab_button(
-                                ui,
-                                EditorTab::TitleCfg,
-                                title_cfg_label,
-                                self.title_cfg_editor.modified,
-                                &tab_font,
-                            );
+                    let title_cfg_label = if self.title_cfg_editor.modified {
+                        "title.cfg*"
+                    } else {
+                        "title.cfg"
+                    };
+                    self.editor_tab_button(
+                        ui,
+                        EditorTab::TitleCfg,
+                        title_cfg_label,
+                        self.title_cfg_editor.modified,
+                        &tab_font,
+                    );
 
-                            self.editor_tab_button(
-                                ui,
-                                EditorTab::IconSys,
-                                "icon.sys",
-                                false,
-                                &tab_font,
-                            );
+                    self.editor_tab_button(ui, EditorTab::IconSys, "icon.sys", false, &tab_font);
 
-                            let timestamp_label = if self.timestamp_rules_modified {
-                                "Timestamp rules*"
-                            } else {
-                                "Timestamp rules"
-                            };
-                            self.editor_tab_button(
-                                ui,
-                                EditorTab::TimestampAuto,
-                                timestamp_label,
-                                self.timestamp_rules_modified,
-                                &tab_font,
-                            );
+                    let timestamp_label = if self.timestamp_rules_modified {
+                        "Timestamp rules*"
+                    } else {
+                        "Timestamp rules"
+                    };
+                    self.editor_tab_button(
+                        ui,
+                        EditorTab::TimestampAuto,
+                        timestamp_label,
+                        self.timestamp_rules_modified,
+                        &tab_font,
+                    );
+                });
 
-                            ui.spacing_mut().item_spacing = previous_spacing;
-                        });
-                    });
-
-                let tab_rect = tab_bar.inner_rect;
+                let tab_rect = tab_bar.response.rect;
                 let tab_separator = egui::Rect::from_min_max(
                     egui::pos2(rect.min.x, tab_rect.max.y + 4.0),
                     egui::pos2(rect.max.x, tab_rect.max.y + 6.0),
@@ -2785,9 +2741,7 @@ impl eframe::App for PackerApp {
 
                 match self.editor_tab {
                     EditorTab::PsuSettings => {
-                        egui::ScrollArea::vertical()
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
                             ui::centered_column(ui, CENTERED_COLUMN_MAX_WIDTH, |ui| {
                                 ui::file_picker::folder_section(self, ui);
 
@@ -2801,19 +2755,18 @@ impl eframe::App for PackerApp {
 
                                 let two_column_layout =
                                     ui.available_width() >= PACK_CONTROLS_TWO_COLUMN_MIN_WIDTH;
-                                let section_gap = 12.0;
                                 if two_column_layout {
                                     ui.columns(2, |columns| {
                                         columns[0].vertical(|ui| {
                                             ui::pack_controls::metadata_section(self, ui);
-                                            ui.add_space(section_gap);
+                                            ui.add_space(8.0);
                                             ui::pack_controls::output_section(self, ui);
                                         });
 
                                         columns[1].vertical(|ui| {
                                             if !showing_psu {
                                                 ui::pack_controls::file_filters_section(self, ui);
-                                                ui.add_space(section_gap);
+                                                ui.add_space(8.0);
                                             }
                                             ui::pack_controls::packaging_section(self, ui);
                                         });
@@ -2822,14 +2775,14 @@ impl eframe::App for PackerApp {
                                     ui::pack_controls::metadata_section(self, ui);
 
                                     if !showing_psu {
-                                        ui.add_space(section_gap);
+                                        ui.add_space(8.0);
                                         ui::pack_controls::file_filters_section(self, ui);
                                     }
 
-                                    ui.add_space(section_gap);
+                                    ui.add_space(8.0);
                                     ui::pack_controls::output_section(self, ui);
 
-                                    ui.add_space(section_gap);
+                                    ui.add_space(8.0);
                                     ui::pack_controls::packaging_section(self, ui);
                                 }
                             });
@@ -2898,18 +2851,14 @@ impl eframe::App for PackerApp {
                         }
                     }
                     EditorTab::IconSys => {
-                        egui::ScrollArea::vertical()
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
                             ui::centered_column(ui, CENTERED_COLUMN_MAX_WIDTH, |ui| {
                                 ui::icon_sys::icon_sys_editor(self, ui);
                             });
                         });
                     }
                     EditorTab::TimestampAuto => {
-                        egui::ScrollArea::vertical()
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
                             ui::centered_column(ui, CENTERED_COLUMN_MAX_WIDTH, |ui| {
                                 ui::timestamps::timestamp_rules_editor(self, ui);
                             });
@@ -2923,6 +2872,101 @@ impl eframe::App for PackerApp {
     }
 }
 
+struct EditorTabWidget<'a> {
+    label: &'a str,
+    font: egui::FontId,
+    theme: &'a theme::Palette,
+    is_selected: bool,
+    alert: bool,
+}
+
+impl<'a> EditorTabWidget<'a> {
+    fn new(
+        label: &'a str,
+        font: egui::FontId,
+        theme: &'a theme::Palette,
+        is_selected: bool,
+        alert: bool,
+    ) -> Self {
+        Self {
+            label,
+            font,
+            theme,
+            is_selected,
+            alert,
+        }
+    }
+}
+
+impl<'a> Widget for EditorTabWidget<'a> {
+    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
+        let base_padding = egui::vec2(12.0, 6.0);
+        let hover_extra = egui::vec2(2.0, 2.0);
+        let selected_extra = egui::vec2(4.0, 4.0);
+        let max_padding = base_padding + selected_extra;
+        let rounding = egui::CornerRadius::same(10);
+
+        let mut text_color = self.theme.text_primary;
+        if self.is_selected {
+            text_color = egui::Color32::WHITE;
+        } else if self.alert {
+            text_color = self.theme.neon_accent;
+        }
+
+        let galley = ui.fonts(|fonts| {
+            fonts.layout_no_wrap(self.label.to_owned(), self.font.clone(), text_color)
+        });
+        let desired_size = galley.size() + max_padding * 2.0;
+
+        let (rect, mut response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+
+        if ui.is_rect_visible(rect) {
+            let mut padding = base_padding;
+            if response.hovered() {
+                padding += hover_extra;
+            }
+            if self.is_selected {
+                padding += selected_extra;
+            }
+
+            let fill = if self.is_selected {
+                self.theme.neon_accent.gamma_multiply(0.45)
+            } else if response.hovered() {
+                self.theme.soft_accent.gamma_multiply(0.38)
+            } else if self.alert {
+                self.theme.neon_accent.gamma_multiply(0.24)
+            } else {
+                self.theme.soft_accent.gamma_multiply(0.24)
+            };
+
+            let mut stroke_color = self.theme.soft_accent.gamma_multiply(0.7);
+            if self.is_selected {
+                stroke_color = self.theme.neon_accent;
+            } else if self.alert || response.hovered() {
+                stroke_color = self.theme.neon_accent.gamma_multiply(0.8);
+            }
+
+            ui.painter().rect_filled(rect, rounding, fill);
+            ui.painter().rect_stroke(
+                rect,
+                rounding,
+                egui::Stroke::new(1.0, stroke_color),
+                egui::StrokeKind::Outside,
+            );
+
+            let text_pos = rect.left_top() + padding;
+            ui.painter().galley(text_pos, galley, text_color);
+        }
+
+        response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        let enabled = response.enabled();
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, self.label)
+        });
+        response
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2930,16 +2974,6 @@ mod tests {
     use psu_packer::IconSysFlags;
     use std::fs;
     use tempfile::tempdir;
-
-    #[test]
-    fn sanitize_zoom_handles_non_finite_and_non_positive_values() {
-        assert_eq!(sanitize_zoom(f32::NAN), 1.0);
-        assert_eq!(sanitize_zoom(f32::INFINITY), 1.0);
-        assert_eq!(sanitize_zoom(f32::NEG_INFINITY), 1.0);
-        assert_eq!(sanitize_zoom(0.0), 1.0);
-        assert_eq!(sanitize_zoom(-1.0), 1.0);
-        assert_eq!(sanitize_zoom(1.5), 1.5);
-    }
 
     #[cfg(feature = "psu-toml-editor")]
     #[test]
@@ -2952,7 +2986,6 @@ mod tests {
         app.psu_toml_editor.modified = true;
 
         let ctx = egui::Context::default();
-        crate::ui::theme::install(&ctx, &app.theme);
 
         let _ = ctx.run(Default::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {

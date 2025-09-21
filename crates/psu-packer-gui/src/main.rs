@@ -14,17 +14,13 @@ fn main() -> eframe::Result<()> {
         Err(wgpu_error) => {
             report_renderer_error("WGPU", &wgpu_error);
 
-            if cfg!(feature = "eframe/glow") {
-                let glow_result = run_app_with_renderer(Renderer::Glow);
-                match glow_result {
-                    Ok(result) => Ok(result),
-                    Err(glow_error) => {
-                        report_renderer_error("Glow", &glow_error);
-                        Err(wgpu_error)
-                    }
+            let glow_result = run_app_with_renderer(Renderer::Glow);
+            match glow_result {
+                Ok(result) => Ok(result),
+                Err(glow_error) => {
+                    report_renderer_error("Glow", &glow_error);
+                    Err(wgpu_error)
                 }
-            } else {
-                Err(wgpu_error)
             }
         }
     }
@@ -39,7 +35,7 @@ fn create_native_options(renderer: Renderer) -> NativeOptions {
 fn shared_native_options() -> NativeOptions {
     let mut options = NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1280.0, 720.0])
+            .with_inner_size([1024.0, 768.0])
             .with_min_inner_size([640.0, 480.0])
             .with_icon(load_app_icon())
             .with_resizable(true),

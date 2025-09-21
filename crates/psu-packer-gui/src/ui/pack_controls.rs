@@ -18,7 +18,7 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
             .spacing(egui::vec2(12.0, 6.0))
             .show(ui, |ui| {
                 ui.label("SAS prefix");
-                let prefix_changed = egui::ComboBox::new("metadata_prefix_combo", "")
+                let prefix_changed = egui::ComboBox::from_id_source("metadata_prefix_combo")
                     .selected_text(app.selected_prefix.label())
                     .show_ui(ui, |ui| {
                         let mut changed = false;
@@ -55,20 +55,11 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
                     metadata_changed = true;
                 }
                 ui.end_row();
-            });
 
-        ui.add_space(10.0);
-        ui.label(egui::RichText::new("Timestamp").strong());
-        ui.add_space(6.0);
-        if crate::ui::timestamps::metadata_timestamp_section(app, ui) {
-            metadata_changed = true;
-        }
+                ui.label("Timestamp");
+                crate::ui::timestamps::metadata_timestamp_section(app, ui);
+                ui.end_row();
 
-        ui.add_space(8.0);
-        egui::Grid::new("metadata_icon_grid")
-            .num_columns(2)
-            .spacing(egui::vec2(12.0, 6.0))
-            .show(ui, |ui| {
                 ui.label("icon.sys");
                 let mut label = "Configure icon.sys metadata in the dedicated tab.".to_string();
                 if app.icon_sys_enabled {

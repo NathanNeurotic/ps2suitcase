@@ -1208,7 +1208,6 @@ dependencies = [
  "mime_guess2",
  "profiling",
  "resvg",
- "serde",
 ]
 
 [[package]]
