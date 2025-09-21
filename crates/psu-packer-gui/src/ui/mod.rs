@@ -12,12 +12,10 @@ pub(crate) fn centered_column<R>(
     max_width: f32,
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
-    let epsilon = f32::EPSILON;
-    let explicit_max = if max_width.is_finite() && max_width > epsilon {
-        Some(max_width)
-    } else {
-        None
-    };
+    let available_width = ui.available_size_before_wrap().x;
+    let content_width = available_width.min(max_width);
+    let margin = (available_width - content_width).max(0.0) / 2.0;
+
 
     let sanitize = |value: f32| -> Option<f32> {
         if value.is_finite() && value > epsilon {
@@ -85,27 +83,21 @@ pub(crate) fn centered_column<R>(
 
     let mut result = None;
     ui.horizontal(|ui| {
-        if margin > epsilon {
+        if margin > 0.0 {
             ui.add_space(margin);
         }
-
-        result = Some(
-            ui.scope(|ui| {
-                ui.set_width(width);
-                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                    add_contents(ui)
-                })
-                .inner
+        let result = ui
+            .vertical(|ui| {
+                ui.set_max_width(content_width);
+                add_contents(ui)
             })
-            .inner,
-        );
-
-        if margin > epsilon {
+            .inner;
+        if margin > 0.0 {
             ui.add_space(margin);
         }
-    });
-
-    result.expect("centered_column should always produce a result")
+        result
+    })
+    .inner
 }
 
 fn reconcile_runtime_hints(
