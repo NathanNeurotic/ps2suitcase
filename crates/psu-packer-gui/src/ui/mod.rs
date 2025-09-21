@@ -50,19 +50,22 @@ pub(crate) fn centered_column<R>(
     }
 
     let explicit_cap = explicit_max.and_then(|max| sanitize(max));
-    if let Some(value) = explicit_cap {
-        sanitized_hints.push(value);
-    }
 
-    let plausibility_floor = sanitized_hints
+    let viewport_floor = sanitized_hints
         .iter()
         .copied()
-        .fold(0.0, f32::max)
-        .mul_add(0.1, 0.0);
+        .fold(f32::INFINITY, f32::min);
+
+    let plausibility_floor = if viewport_floor.is_finite() {
+        viewport_floor.mul_add(0.1, 0.0)
+    } else {
+        0.0
+    }
+    .clamp(0.0, ui.spacing().interact_size.x);
 
     let discard_if_implausible = |value: &mut Option<f32>| {
         if let Some(inner) = value {
-            if plausibility_floor > epsilon && *inner < plausibility_floor {
+            if !inner.is_finite() || *inner <= plausibility_floor.max(epsilon) {
                 *value = None;
             }
         }
