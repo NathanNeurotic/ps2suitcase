@@ -3232,12 +3232,14 @@ dependencies = [
  "eframe",
  "egui_extras",
  "image",
+ "indexmap",
  "ps2-filetypes",
  "psu-packer",
  "rfd 0.14.1",
  "serde",
  "serde_json",
  "tempfile",
+ "toml 0.9.5",
  "winresource",
 ]
 
