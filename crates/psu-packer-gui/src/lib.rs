@@ -9,9 +9,11 @@ use std::{
 use crate::ui::theme;
 use chrono::NaiveDateTime;
 use eframe::egui::{self, Widget};
+use indexmap::IndexMap;
 use ps2_filetypes::{sjis, templates, IconSys, PSUEntryKind, TitleCfg, PSU};
 use psu_packer::{ColorConfig, ColorFConfig, IconSysConfig, VectorConfig};
 use tempfile::{tempdir, TempDir};
+use toml::Table;
 
 pub(crate) mod sas_timestamps;
 pub mod ui;
@@ -269,11 +271,57 @@ enum EditorTab {
     TimestampAuto,
 }
 
+struct TitleCfgCache {
+    cfg: TitleCfg,
+    missing_fields: Vec<&'static str>,
+}
+
+impl TitleCfgCache {
+    fn new(cfg: TitleCfg) -> Self {
+        let missing_fields = cfg.missing_mandatory_fields();
+        Self {
+            cfg,
+            missing_fields,
+        }
+    }
+
+    fn helper(&self) -> &Table {
+        &self.cfg.helper
+    }
+
+    fn index_map(&self) -> &IndexMap<String, String> {
+        &self.cfg.index_map
+    }
+
+    fn index_map_mut(&mut self) -> &mut IndexMap<String, String> {
+        &mut self.cfg.index_map
+    }
+
+    fn missing_fields(&self) -> &[&'static str] {
+        &self.missing_fields
+    }
+
+    fn refresh_metadata(&mut self) {
+        self.missing_fields = self.cfg.missing_mandatory_fields();
+    }
+
+    fn sync_index_map_to_contents(&mut self) {
+        self.cfg.sync_index_map_to_contents();
+        self.refresh_metadata();
+    }
+
+    fn contents(&self) -> &str {
+        &self.cfg.contents
+    }
+}
+
 #[derive(Default)]
 struct TextFileEditor {
     content: String,
     modified: bool,
     load_error: Option<String>,
+    title_cfg_cache: Option<TitleCfgCache>,
+    title_cfg_cache_dirty: bool,
 }
 
 impl TextFileEditor {
@@ -281,18 +329,61 @@ impl TextFileEditor {
         self.content = content;
         self.modified = false;
         self.load_error = None;
+        self.reset_title_cfg_cache();
     }
 
     fn set_error_message(&mut self, message: String) {
         self.content.clear();
         self.modified = false;
         self.load_error = Some(message);
+        self.reset_title_cfg_cache();
     }
 
     fn clear(&mut self) {
         self.content.clear();
         self.modified = false;
         self.load_error = None;
+        self.reset_title_cfg_cache();
+    }
+
+    fn reset_title_cfg_cache(&mut self) {
+        self.title_cfg_cache = None;
+        self.title_cfg_cache_dirty = true;
+    }
+
+    #[cfg_attr(not(feature = "psu-toml-editor"), allow(dead_code))]
+    fn mark_title_cfg_dirty(&mut self) {
+        self.title_cfg_cache_dirty = true;
+    }
+
+    fn ensure_title_cfg_cache(&mut self) {
+        if self.title_cfg_cache_dirty || self.title_cfg_cache.is_none() {
+            let cfg = TitleCfg::new(self.content.clone());
+            self.title_cfg_cache = Some(TitleCfgCache::new(cfg));
+            self.title_cfg_cache_dirty = false;
+        }
+    }
+
+    fn title_cfg_cache(&mut self) -> Option<&TitleCfgCache> {
+        self.ensure_title_cfg_cache();
+        self.title_cfg_cache.as_ref()
+    }
+
+    fn title_cfg_cache_mut(&mut self) -> Option<&mut TitleCfgCache> {
+        self.ensure_title_cfg_cache();
+        self.title_cfg_cache.as_mut()
+    }
+
+    fn title_cfg_index_map(&mut self) -> Option<&IndexMap<String, String>> {
+        self.title_cfg_cache().map(|cache| cache.index_map())
+    }
+
+    fn title_cfg_helper_table(&mut self) -> Option<&Table> {
+        self.title_cfg_cache().map(|cache| cache.helper())
+    }
+
+    fn title_cfg_missing_fields(&mut self) -> Option<&[&'static str]> {
+        self.title_cfg_cache().map(|cache| cache.missing_fields())
     }
 }
 
@@ -1645,8 +1736,13 @@ impl PackerApp {
     }
 
     pub(crate) fn apply_title_cfg_edits(&mut self) -> bool {
-        let cfg = TitleCfg::new(self.title_cfg_editor.content.clone());
-        if !cfg.has_mandatory_fields() {
+        let has_all_fields = self
+            .title_cfg_editor
+            .title_cfg_missing_fields()
+            .map(|fields| fields.is_empty())
+            .unwrap_or(false);
+
+        if !has_all_fields {
             self.set_error_message(
                 "title.cfg is missing mandatory fields. Please include the required keys.",
             );
@@ -2324,6 +2420,7 @@ fn text_editor_ui(
 
         if editing_enabled && response.changed() {
             editor.modified = true;
+            editor.mark_title_cfg_dirty();
         }
     }
 
@@ -2345,19 +2442,27 @@ fn title_cfg_form_ui(
     let show_form = editing_enabled || !editor.content.is_empty();
 
     if show_form {
-        let previous_content = editor.content.clone();
-        let mut cfg = TitleCfg::new(editor.content.clone());
-        let helper = cfg.helper.clone();
-
-        let mut keys: Vec<String> = cfg.index_map.keys().cloned().collect();
+        let mut keys: Vec<String> = editor
+            .title_cfg_index_map()
+            .map(|map| map.keys().cloned().collect())
+            .unwrap_or_default();
         let mut seen_keys: HashSet<String> = keys.iter().cloned().collect();
-        for key in helper.keys() {
-            if seen_keys.insert(key.clone()) {
-                keys.push(key.clone());
+        {
+            let helper_keys: Vec<String> = editor
+                .title_cfg_helper_table()
+                .map(|table| table.keys().cloned().collect())
+                .unwrap_or_default();
+            for key in helper_keys {
+                if seen_keys.insert(key.clone()) {
+                    keys.push(key);
+                }
             }
         }
 
-        let missing_fields = cfg.missing_mandatory_fields();
+        let missing_fields: Vec<&'static str> = editor
+            .title_cfg_missing_fields()
+            .map(|fields| fields.to_vec())
+            .unwrap_or_default();
         let missing_field_set: HashSet<&str> = missing_fields.iter().copied().collect();
 
         let mut section_lookup: HashMap<&'static str, usize> = HashMap::new();
@@ -2377,193 +2482,207 @@ fn title_cfg_form_ui(
             }
         }
 
-        let mut index_map_changed = false;
+        let mut new_contents: Option<String> = None;
+        if let Some(cache) = editor.title_cfg_cache_mut() {
+            let mut index_map_changed = false;
 
-        egui::ScrollArea::vertical()
-            .id_source("title_cfg_form_scroll")
-            .show(ui, |ui| {
-                ui::centered_column(ui, CENTERED_COLUMN_MAX_WIDTH, |ui| {
-                    if !missing_fields.is_empty() {
-                        let message =
-                            format!("Missing mandatory fields: {}", missing_fields.join(", "));
-                        ui.colored_label(egui::Color32::YELLOW, message);
-                        ui.add_space(8.0);
-                    }
+            egui::ScrollArea::vertical()
+                .id_source("title_cfg_form_scroll")
+                .show(ui, |ui| {
+                    ui::centered_column(ui, CENTERED_COLUMN_MAX_WIDTH, |ui| {
+                        if !missing_fields.is_empty() {
+                            let message =
+                                format!("Missing mandatory fields: {}", missing_fields.join(", "));
+                            ui.colored_label(egui::Color32::YELLOW, message);
+                            ui.add_space(8.0);
+                        }
 
-                    let mut render_fields =
-                        |ui: &mut egui::Ui, grid_id: String, section_keys: &[String]| {
-                            egui::Grid::new(grid_id)
-                                .num_columns(2)
-                                .spacing(TITLE_CFG_GRID_SPACING)
-                                .striped(true)
-                                .show(ui, |ui| {
-                                    for key in section_keys {
-                                        let mut tooltip: Option<String> = None;
-                                        let mut hint: Option<String> = None;
-                                        let mut values: Option<Vec<String>> = None;
-                                        let mut char_limit: Option<usize> = None;
-                                        let mut multiline = false;
+                        let mut render_fields =
+                            |ui: &mut egui::Ui, grid_id: String, section_keys: &[String]| {
+                                egui::Grid::new(grid_id)
+                                    .num_columns(2)
+                                    .spacing(TITLE_CFG_GRID_SPACING)
+                                    .striped(true)
+                                    .show(ui, |ui| {
+                                        for key in section_keys {
+                                            let mut tooltip: Option<String> = None;
+                                            let mut hint: Option<String> = None;
+                                            let mut values: Option<Vec<String>> = None;
+                                            let mut char_limit: Option<usize> = None;
+                                            let mut multiline = false;
 
-                                        if let Some(table) =
-                                            helper.get(key).and_then(|value| value.as_table())
-                                        {
-                                            tooltip = table
-                                                .get("tooltip")
-                                                .and_then(|value| value.as_str())
-                                                .map(|s| s.to_owned());
-                                            hint = table
-                                                .get("hint")
-                                                .and_then(|value| value.as_str())
-                                                .map(|s| s.to_owned());
-                                            if let Some(array) = table
-                                                .get("values")
-                                                .and_then(|value| value.as_array())
+                                            if let Some(table) = cache
+                                                .helper()
+                                                .get(key)
+                                                .and_then(|value| value.as_table())
                                             {
-                                                let options: Vec<String> = array
-                                                    .iter()
-                                                    .filter_map(|value| {
-                                                        value.as_str().map(|s| s.to_owned())
-                                                    })
-                                                    .collect();
-                                                if !options.is_empty() {
-                                                    values = Some(options);
+                                                tooltip = table
+                                                    .get("tooltip")
+                                                    .and_then(|value| value.as_str())
+                                                    .map(|s| s.to_owned());
+                                                hint = table
+                                                    .get("hint")
+                                                    .and_then(|value| value.as_str())
+                                                    .map(|s| s.to_owned());
+                                                if let Some(array) = table
+                                                    .get("values")
+                                                    .and_then(|value| value.as_array())
+                                                {
+                                                    let options: Vec<String> = array
+                                                        .iter()
+                                                        .filter_map(|value| {
+                                                            value.as_str().map(|s| s.to_owned())
+                                                        })
+                                                        .collect();
+                                                    if !options.is_empty() {
+                                                        values = Some(options);
+                                                    }
                                                 }
+                                                char_limit = table
+                                                    .get("char_limit")
+                                                    .and_then(|value| value.as_integer())
+                                                    .and_then(|value| {
+                                                        (value >= 0).then(|| value as usize)
+                                                    });
+                                                multiline = table
+                                                    .get("multiline")
+                                                    .and_then(|value| value.as_bool())
+                                                    .unwrap_or(false);
                                             }
-                                            char_limit = table
-                                                .get("char_limit")
-                                                .and_then(|value| value.as_integer())
-                                                .and_then(|value| {
-                                                    (value >= 0).then(|| value as usize)
-                                                });
-                                            multiline = table
-                                                .get("multiline")
-                                                .and_then(|value| value.as_bool())
-                                                .unwrap_or(false);
-                                        }
 
-                                        let mut label_text = egui::RichText::new(key.as_str());
-                                        if missing_field_set.contains(key.as_str()) {
-                                            label_text = label_text.color(egui::Color32::YELLOW);
-                                        }
-                                        let label = ui.label(label_text);
-                                        if let Some(tooltip) = &tooltip {
-                                            label.on_hover_text(tooltip);
-                                        }
+                                            let mut label_text = egui::RichText::new(key.as_str());
+                                            if missing_field_set.contains(key.as_str()) {
+                                                label_text =
+                                                    label_text.color(egui::Color32::YELLOW);
+                                            }
+                                            let label = ui.label(label_text);
+                                            if let Some(tooltip) = &tooltip {
+                                                label.on_hover_text(tooltip);
+                                            }
 
-                                        let existing_value =
-                                            cfg.index_map.get(key).cloned().unwrap_or_default();
-                                        let mut new_value = existing_value.clone();
-                                        let mut field_changed = false;
+                                            let existing_value = cache
+                                                .index_map()
+                                                .get(key)
+                                                .cloned()
+                                                .unwrap_or_default();
+                                            let mut new_value = existing_value.clone();
+                                            let mut field_changed = false;
 
-                                        if let Some(options) = values.as_ref() {
-                                            let display_text = if new_value.is_empty() {
-                                                hint.clone()
-                                                    .unwrap_or_else(|| "(not set)".to_string())
-                                            } else {
-                                                new_value.clone()
-                                            };
-                                            if editing_enabled {
-                                                let response = egui::ComboBox::from_id_source(
-                                                    format!("title_cfg_option_{key}"),
-                                                )
-                                                .selected_text(display_text.clone())
-                                                .show_ui(ui, |ui| {
-                                                    ui.selectable_value(
-                                                        &mut new_value,
-                                                        String::new(),
-                                                        "(not set)",
-                                                    );
-                                                    for option in options {
+                                            if let Some(options) = values.as_ref() {
+                                                let display_text = if new_value.is_empty() {
+                                                    hint.clone()
+                                                        .unwrap_or_else(|| "(not set)".to_string())
+                                                } else {
+                                                    new_value.clone()
+                                                };
+                                                if editing_enabled {
+                                                    let response = egui::ComboBox::from_id_source(
+                                                        format!("title_cfg_option_{key}"),
+                                                    )
+                                                    .selected_text(display_text.clone())
+                                                    .show_ui(ui, |ui| {
                                                         ui.selectable_value(
                                                             &mut new_value,
-                                                            option.clone(),
-                                                            option,
+                                                            String::new(),
+                                                            "(not set)",
                                                         );
+                                                        for option in options {
+                                                            ui.selectable_value(
+                                                                &mut new_value,
+                                                                option.clone(),
+                                                                option,
+                                                            );
+                                                        }
+                                                    });
+                                                    if let Some(tooltip) = &tooltip {
+                                                        response.response.on_hover_text(tooltip);
                                                     }
-                                                });
-                                                if let Some(tooltip) = &tooltip {
-                                                    response.response.on_hover_text(tooltip);
-                                                }
-                                                if new_value != existing_value {
-                                                    field_changed = true;
+                                                    if new_value != existing_value {
+                                                        field_changed = true;
+                                                    }
+                                                } else {
+                                                    let response = ui.label(display_text);
+                                                    if let Some(tooltip) = &tooltip {
+                                                        response.on_hover_text(tooltip);
+                                                    }
                                                 }
                                             } else {
-                                                let response = ui.label(display_text);
+                                                let mut text_edit = if multiline {
+                                                    egui::TextEdit::multiline(&mut new_value)
+                                                        .desired_rows(TITLE_CFG_MULTILINE_ROWS)
+                                                        .desired_width(f32::INFINITY)
+                                                } else {
+                                                    egui::TextEdit::singleline(&mut new_value)
+                                                };
+                                                if let Some(hint) = &hint {
+                                                    text_edit = text_edit.hint_text(hint.clone());
+                                                }
+                                                if let Some(limit) = char_limit {
+                                                    text_edit = text_edit.char_limit(limit);
+                                                }
+                                                let response =
+                                                    ui.add_enabled(editing_enabled, text_edit);
+                                                let changed = editing_enabled
+                                                    && response.changed()
+                                                    && new_value != existing_value;
                                                 if let Some(tooltip) = &tooltip {
                                                     response.on_hover_text(tooltip);
                                                 }
+                                                if changed {
+                                                    field_changed = true;
+                                                }
                                             }
-                                        } else {
-                                            let mut text_edit = if multiline {
-                                                egui::TextEdit::multiline(&mut new_value)
-                                                    .desired_rows(TITLE_CFG_MULTILINE_ROWS)
-                                                    .desired_width(f32::INFINITY)
-                                            } else {
-                                                egui::TextEdit::singleline(&mut new_value)
-                                            };
-                                            if let Some(hint) = &hint {
-                                                text_edit = text_edit.hint_text(hint.clone());
+
+                                            if editing_enabled && field_changed {
+                                                cache
+                                                    .index_map_mut()
+                                                    .insert(key.clone(), new_value);
+                                                index_map_changed = true;
                                             }
-                                            if let Some(limit) = char_limit {
-                                                text_edit = text_edit.char_limit(limit);
-                                            }
-                                            let response =
-                                                ui.add_enabled(editing_enabled, text_edit);
-                                            let changed = editing_enabled
-                                                && response.changed()
-                                                && new_value != existing_value;
-                                            if let Some(tooltip) = &tooltip {
-                                                response.on_hover_text(tooltip);
-                                            }
-                                            if changed {
-                                                field_changed = true;
-                                            }
+
+                                            ui.end_row();
                                         }
+                                    });
+                            };
 
-                                        if editing_enabled && field_changed {
-                                            cfg.index_map.insert(key.clone(), new_value);
-                                            index_map_changed = true;
-                                        }
-
-                                        ui.end_row();
-                                    }
-                                });
-                        };
-
-                    let mut rendered_section = false;
-                    for (index, (title, _)) in TITLE_CFG_SECTIONS.iter().enumerate() {
-                        let section_keys = &section_fields[index];
-                        if section_keys.is_empty() {
-                            continue;
+                        let mut rendered_section = false;
+                        for (index, (title, _)) in TITLE_CFG_SECTIONS.iter().enumerate() {
+                            let section_keys = &section_fields[index];
+                            if section_keys.is_empty() {
+                                continue;
+                            }
+                            if rendered_section {
+                                ui.add_space(TITLE_CFG_SECTION_GAP);
+                            }
+                            rendered_section = true;
+                            ui.heading(theme::display_heading_text(ui, *title));
+                            ui.add_space(TITLE_CFG_SECTION_HEADING_GAP);
+                            render_fields(ui, format!("title_cfg_form_grid_{title}"), section_keys);
                         }
-                        if rendered_section {
-                            ui.add_space(TITLE_CFG_SECTION_GAP);
-                        }
-                        rendered_section = true;
-                        ui.heading(theme::display_heading_text(ui, *title));
-                        ui.add_space(TITLE_CFG_SECTION_HEADING_GAP);
-                        render_fields(ui, format!("title_cfg_form_grid_{title}"), section_keys);
-                    }
 
-                    if !additional_fields.is_empty() {
-                        if rendered_section {
-                            ui.add_space(TITLE_CFG_SECTION_GAP);
+                        if !additional_fields.is_empty() {
+                            if rendered_section {
+                                ui.add_space(TITLE_CFG_SECTION_GAP);
+                            }
+                            ui.heading(theme::display_heading_text(ui, "Additional fields"));
+                            ui.add_space(TITLE_CFG_SECTION_HEADING_GAP);
+                            render_fields(
+                                ui,
+                                "title_cfg_form_grid_additional".to_string(),
+                                &additional_fields,
+                            );
                         }
-                        ui.heading(theme::display_heading_text(ui, "Additional fields"));
-                        ui.add_space(TITLE_CFG_SECTION_HEADING_GAP);
-                        render_fields(
-                            ui,
-                            "title_cfg_form_grid_additional".to_string(),
-                            &additional_fields,
-                        );
-                    }
+                    });
                 });
-            });
 
-        if index_map_changed {
-            cfg.sync_index_map_to_contents();
-            if cfg.contents != previous_content {
-                editor.content = cfg.contents.clone();
+            if index_map_changed {
+                cache.sync_index_map_to_contents();
+                new_contents = Some(cache.contents().to_string());
+            }
+        }
+        if let Some(updated_content) = new_contents {
+            if updated_content != editor.content {
+                editor.content = updated_content;
                 editor.modified = true;
             }
         }
@@ -3268,7 +3387,8 @@ linebreak_pos = 5
     #[test]
     fn apply_title_cfg_validates_contents() {
         let mut app = PackerApp::default();
-        app.title_cfg_editor.content = templates::TITLE_CFG_TEMPLATE.to_string();
+        app.title_cfg_editor
+            .set_content(templates::TITLE_CFG_TEMPLATE.to_string());
         app.title_cfg_editor.modified = true;
 
         assert!(app.apply_title_cfg_edits());
@@ -3279,7 +3399,8 @@ linebreak_pos = 5
     #[test]
     fn apply_title_cfg_reports_missing_fields() {
         let mut app = PackerApp::default();
-        app.title_cfg_editor.content = "title=Example".to_string();
+        app.title_cfg_editor
+            .set_content("title=Example".to_string());
         app.title_cfg_editor.modified = true;
 
         assert!(!app.apply_title_cfg_edits());
