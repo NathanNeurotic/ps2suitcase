@@ -22,6 +22,15 @@ pub struct IconSysConfig {
     pub ambient_color: Option<ColorFConfig>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResolvedIconSysConfig {
+    pub background_transparency: u32,
+    pub background_colors: [ColorConfig; 4],
+    pub light_directions: [VectorConfig; 3],
+    pub light_colors: [ColorFConfig; 3],
+    pub ambient_color: ColorFConfig,
+}
+
 impl IconSysConfig {
     pub fn to_bytes(&self) -> Result<Vec<u8>, crate::Error> {
         let icon_sys = self.build_icon_sys()?;
@@ -236,6 +245,56 @@ impl IconSysConfig {
     pub fn linebreak_position(&self) -> u16 {
         self.linebreak_pos.unwrap_or(Self::default_linebreak_pos())
     }
+
+    pub fn resolved_with_fallback(
+        &self,
+        icon_sys_fallback: Option<&IconSys>,
+    ) -> ResolvedIconSysConfig {
+        let background_transparency = self
+            .background_transparency
+            .or_else(|| icon_sys_fallback.map(|icon_sys| icon_sys.background_transparency))
+            .unwrap_or_else(Self::default_background_transparency);
+
+        let background_colors = if self.background_colors.is_some() {
+            self.background_colors_array()
+        } else if let Some(icon_sys) = icon_sys_fallback {
+            icon_sys.background_colors.map(Into::into)
+        } else {
+            Self::default_background_colors()
+        };
+
+        let light_directions = if self.light_directions.is_some() {
+            self.light_directions_array()
+        } else if let Some(icon_sys) = icon_sys_fallback {
+            icon_sys.light_directions.map(Into::into)
+        } else {
+            Self::default_light_directions()
+        };
+
+        let light_colors = if self.light_colors.is_some() {
+            self.light_colors_array()
+        } else if let Some(icon_sys) = icon_sys_fallback {
+            icon_sys.light_colors.map(Into::into)
+        } else {
+            Self::default_light_colors()
+        };
+
+        let ambient_color = if let Some(color) = self.ambient_color {
+            color
+        } else if let Some(icon_sys) = icon_sys_fallback {
+            icon_sys.ambient_color.into()
+        } else {
+            Self::default_ambient_color()
+        };
+
+        ResolvedIconSysConfig {
+            background_transparency,
+            background_colors,
+            light_directions,
+            light_colors,
+            ambient_color,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -249,6 +308,17 @@ pub struct ColorConfig {
 impl From<ColorConfig> for Color {
     fn from(value: ColorConfig) -> Self {
         Color {
+            r: value.r,
+            g: value.g,
+            b: value.b,
+            a: value.a,
+        }
+    }
+}
+
+impl From<Color> for ColorConfig {
+    fn from(value: Color) -> Self {
+        ColorConfig {
             r: value.r,
             g: value.g,
             b: value.b,
@@ -276,6 +346,17 @@ impl From<ColorFConfig> for ColorF {
     }
 }
 
+impl From<ColorF> for ColorFConfig {
+    fn from(value: ColorF) -> Self {
+        ColorFConfig {
+            r: value.r,
+            g: value.g,
+            b: value.b,
+            a: value.a,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq)]
 pub struct VectorConfig {
     pub x: f32,
@@ -287,6 +368,17 @@ pub struct VectorConfig {
 impl From<VectorConfig> for Vector {
     fn from(value: VectorConfig) -> Self {
         Vector {
+            x: value.x,
+            y: value.y,
+            z: value.z,
+            w: value.w,
+        }
+    }
+}
+
+impl From<Vector> for VectorConfig {
+    fn from(value: Vector) -> Self {
+        VectorConfig {
             x: value.x,
             y: value.y,
             z: value.z,
@@ -821,6 +913,7 @@ const ICON_FILE_NAME: &str = "icon.icn";
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ps2_filetypes::{color::Color, ColorF, Vector};
 
     #[test]
     fn sanitize_icon_sys_line_filters_control_chars_and_roundtrips() {
@@ -835,5 +928,284 @@ mod tests {
         let (line1, line2) = split_icon_sys_title(title, break_bytes);
         assert_eq!(line1, "セーブデータ");
         assert_eq!(line2, "こんにちは");
+    }
+
+    #[test]
+    fn resolved_with_fallback_uses_defaults_without_icon_sys() {
+        let config = IconSysConfig {
+            flags: IconSysFlags::new(0),
+            title: "Test".to_string(),
+            linebreak_pos: None,
+            preset: None,
+            background_transparency: None,
+            background_colors: None,
+            light_directions: None,
+            light_colors: None,
+            ambient_color: None,
+        };
+
+        let resolved = config.resolved_with_fallback(None);
+
+        assert_eq!(
+            resolved.background_transparency,
+            IconSysConfig::default_background_transparency()
+        );
+        assert_eq!(
+            resolved.background_colors,
+            IconSysConfig::default_background_colors()
+        );
+        assert_eq!(
+            resolved.light_directions,
+            IconSysConfig::default_light_directions()
+        );
+        assert_eq!(resolved.light_colors, IconSysConfig::default_light_colors());
+        assert_eq!(
+            resolved.ambient_color,
+            IconSysConfig::default_ambient_color()
+        );
+    }
+
+    #[test]
+    fn resolved_with_fallback_prefers_config_values() {
+        let config = IconSysConfig {
+            flags: IconSysFlags::new(0),
+            title: "Test".to_string(),
+            linebreak_pos: None,
+            preset: None,
+            background_transparency: Some(7),
+            background_colors: Some(vec![
+                ColorConfig {
+                    r: 1,
+                    g: 2,
+                    b: 3,
+                    a: 4,
+                },
+                ColorConfig {
+                    r: 5,
+                    g: 6,
+                    b: 7,
+                    a: 8,
+                },
+                ColorConfig {
+                    r: 9,
+                    g: 10,
+                    b: 11,
+                    a: 12,
+                },
+                ColorConfig {
+                    r: 13,
+                    g: 14,
+                    b: 15,
+                    a: 16,
+                },
+            ]),
+            light_directions: Some(vec![
+                VectorConfig {
+                    x: 0.1,
+                    y: 0.2,
+                    z: 0.3,
+                    w: 0.4,
+                },
+                VectorConfig {
+                    x: 0.5,
+                    y: 0.6,
+                    z: 0.7,
+                    w: 0.8,
+                },
+                VectorConfig {
+                    x: 0.9,
+                    y: 1.0,
+                    z: 1.1,
+                    w: 1.2,
+                },
+            ]),
+            light_colors: Some(vec![
+                ColorFConfig {
+                    r: 1.0,
+                    g: 1.1,
+                    b: 1.2,
+                    a: 1.3,
+                },
+                ColorFConfig {
+                    r: 1.4,
+                    g: 1.5,
+                    b: 1.6,
+                    a: 1.7,
+                },
+                ColorFConfig {
+                    r: 1.8,
+                    g: 1.9,
+                    b: 2.0,
+                    a: 2.1,
+                },
+            ]),
+            ambient_color: Some(ColorFConfig {
+                r: 0.5,
+                g: 0.6,
+                b: 0.7,
+                a: 0.8,
+            }),
+        };
+
+        let fallback = IconSys {
+            flags: 0,
+            linebreak_pos: 0,
+            background_transparency: 13,
+            background_colors: [
+                Color::new(2, 3, 4, 5),
+                Color::new(6, 7, 8, 9),
+                Color::new(10, 11, 12, 13),
+                Color::new(14, 15, 16, 17),
+            ],
+            light_directions: [
+                Vector {
+                    x: 1.0,
+                    y: 2.0,
+                    z: 3.0,
+                    w: 4.0,
+                },
+                Vector {
+                    x: 5.0,
+                    y: 6.0,
+                    z: 7.0,
+                    w: 8.0,
+                },
+                Vector {
+                    x: 9.0,
+                    y: 10.0,
+                    z: 11.0,
+                    w: 12.0,
+                },
+            ],
+            light_colors: [
+                ColorF {
+                    r: 0.1,
+                    g: 0.2,
+                    b: 0.3,
+                    a: 0.4,
+                },
+                ColorF {
+                    r: 0.5,
+                    g: 0.6,
+                    b: 0.7,
+                    a: 0.8,
+                },
+                ColorF {
+                    r: 0.9,
+                    g: 1.0,
+                    b: 1.1,
+                    a: 1.2,
+                },
+            ],
+            ambient_color: ColorF {
+                r: 0.2,
+                g: 0.3,
+                b: 0.4,
+                a: 0.5,
+            },
+            title: "Fallback".to_string(),
+            icon_file: "icon.icn".to_string(),
+            icon_copy_file: "icon.icn".to_string(),
+            icon_delete_file: "icon.icn".to_string(),
+        };
+
+        let resolved = config.resolved_with_fallback(Some(&fallback));
+
+        assert_eq!(resolved.background_transparency, 7);
+        assert_eq!(resolved.background_colors, config.background_colors_array());
+        assert_eq!(resolved.light_directions, config.light_directions_array());
+        assert_eq!(resolved.light_colors, config.light_colors_array());
+        assert_eq!(resolved.ambient_color, config.ambient_color.unwrap());
+    }
+
+    #[test]
+    fn resolved_with_fallback_uses_icon_sys_when_config_missing_values() {
+        let config = IconSysConfig {
+            flags: IconSysFlags::new(0),
+            title: "Test".to_string(),
+            linebreak_pos: None,
+            preset: None,
+            background_transparency: None,
+            background_colors: None,
+            light_directions: None,
+            light_colors: None,
+            ambient_color: None,
+        };
+
+        let fallback = IconSys {
+            flags: 0,
+            linebreak_pos: 0,
+            background_transparency: 99,
+            background_colors: [
+                Color::new(1, 1, 1, 1),
+                Color::new(2, 2, 2, 2),
+                Color::new(3, 3, 3, 3),
+                Color::new(4, 4, 4, 4),
+            ],
+            light_directions: [
+                Vector {
+                    x: 1.0,
+                    y: 0.0,
+                    z: 0.0,
+                    w: 0.0,
+                },
+                Vector {
+                    x: 0.0,
+                    y: 1.0,
+                    z: 0.0,
+                    w: 0.0,
+                },
+                Vector {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 1.0,
+                    w: 0.0,
+                },
+            ],
+            light_colors: [
+                ColorF {
+                    r: 0.2,
+                    g: 0.3,
+                    b: 0.4,
+                    a: 0.5,
+                },
+                ColorF {
+                    r: 0.6,
+                    g: 0.7,
+                    b: 0.8,
+                    a: 0.9,
+                },
+                ColorF {
+                    r: 1.0,
+                    g: 1.1,
+                    b: 1.2,
+                    a: 1.3,
+                },
+            ],
+            ambient_color: ColorF {
+                r: 0.4,
+                g: 0.5,
+                b: 0.6,
+                a: 0.7,
+            },
+            title: "Fallback".to_string(),
+            icon_file: "icon.icn".to_string(),
+            icon_copy_file: "icon.icn".to_string(),
+            icon_delete_file: "icon.icn".to_string(),
+        };
+
+        let resolved = config.resolved_with_fallback(Some(&fallback));
+
+        assert_eq!(resolved.background_transparency, 99);
+        assert_eq!(
+            resolved.background_colors,
+            fallback.background_colors.map(Into::into)
+        );
+        assert_eq!(
+            resolved.light_directions,
+            fallback.light_directions.map(Into::into)
+        );
+        assert_eq!(resolved.light_colors, fallback.light_colors.map(Into::into));
+        assert_eq!(resolved.ambient_color, fallback.ambient_color.into());
     }
 }
