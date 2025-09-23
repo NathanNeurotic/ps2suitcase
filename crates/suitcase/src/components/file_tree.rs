@@ -5,6 +5,7 @@ use eframe::egui::{
     include_image, vec2, Align, Button, Color32, Id, ImageSource, Layout, ScrollArea, Stroke,
     Style, TextWrapMode, Ui,
 };
+use rfd::FileDialog;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -112,10 +113,11 @@ impl FileTree {
                 });
 
         response.inner.context_menu(|ui| {
-            ui.set_min_width(100.0);
-            ui.button("Export");
-            ui.separator();
-            ui.button("Delete");
+            ui.set_min_width(150.0);
+            if ui.button("Export PSU...").clicked() {
+                state.export_psu();
+                ui.close_menu();
+            }
         });
     }
 
@@ -134,6 +136,21 @@ impl FileTree {
                 file_path: path.clone(),
             });
         }
+
+        response.context_menu(|ui| {
+            if ui.button("Export...").clicked() {
+                if let Some(destination) = FileDialog::new().set_file_name(&file_name).save_file() {
+                    if let Err(err) = std::fs::copy(&path, &destination) {
+                        eprintln!(
+                            "Failed to export file '{}' to '{}': {err}",
+                            path.display(),
+                            destination.display()
+                        );
+                    }
+                }
+                ui.close_menu();
+            }
+        });
     }
 
     fn display_name(path: &Path) -> String {
