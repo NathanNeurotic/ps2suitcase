@@ -29,7 +29,7 @@ pub(crate) const ICON_SYS_TITLE_CHAR_LIMIT: usize = 16;
 const ICON_SYS_UNSUPPORTED_CHAR_PLACEHOLDER: char = '\u{FFFD}';
 const TIMESTAMP_RULES_FILE: &str = "timestamp_rules.json";
 pub(crate) const REQUIRED_PROJECT_FILES: &[&str] =
-    &["icon.icn", "icon.sys", "psu.toml", "title.cfg"];
+    &["list.icn", "copy.icn", "del.icn", "title.cfg", "icon.sys"];
 const CENTERED_COLUMN_MAX_WIDTH: f32 = 1180.0;
 const PACK_CONTROLS_TWO_COLUMN_MIN_WIDTH: f32 = 940.0;
 const TITLE_CFG_GRID_SPACING: [f32; 2] = [28.0, 12.0];
@@ -87,6 +87,12 @@ impl MissingFileReason {
 pub(crate) struct MissingRequiredFile {
     pub(crate) name: String,
     pub(crate) reason: MissingFileReason,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ProjectRequirementStatus {
+    pub(crate) file: MissingRequiredFile,
+    pub(crate) satisfied: bool,
 }
 
 impl MissingRequiredFile {
@@ -630,30 +636,30 @@ impl PackerApp {
             .map(|folder| Self::timestamp_rules_path_from(folder))
     }
 
-    fn missing_required_project_files_for(&self, folder: &Path) -> Vec<MissingRequiredFile> {
-        let mut missing = REQUIRED_PROJECT_FILES
+    fn active_project_requirements(&self) -> Vec<MissingRequiredFile> {
+        let mut requirements = REQUIRED_PROJECT_FILES
             .iter()
-            .filter_map(|name| {
-                let candidate = folder.join(name);
-                if candidate.is_file() {
-                    None
-                } else {
-                    Some(MissingRequiredFile::always(name))
-                }
-            })
+            .map(|name| MissingRequiredFile::always(name))
             .collect::<Vec<_>>();
 
         if self.include_requires_file("BOOT.ELF") {
-            let candidate = folder.join("BOOT.ELF");
-            if !candidate.is_file() {
-                missing.push(MissingRequiredFile::included("BOOT.ELF"));
-            }
+            requirements.push(MissingRequiredFile::included("BOOT.ELF"));
         }
 
         if self.uses_timestamp_rules_file() {
-            let candidate = folder.join(TIMESTAMP_RULES_FILE);
+            requirements.push(MissingRequiredFile::timestamp_rules());
+        }
+
+        requirements
+    }
+
+    fn missing_required_project_files_for(&self, folder: &Path) -> Vec<MissingRequiredFile> {
+        let mut missing = Vec::new();
+
+        for requirement in self.active_project_requirements() {
+            let candidate = folder.join(&requirement.name);
             if !candidate.is_file() {
-                missing.push(MissingRequiredFile::timestamp_rules());
+                missing.push(requirement);
             }
         }
 
@@ -677,6 +683,27 @@ impl PackerApp {
         } else {
             self.missing_required_project_files.clear();
         }
+    }
+
+    pub(crate) fn project_requirement_statuses(&self) -> Option<Vec<ProjectRequirementStatus>> {
+        self.folder.as_ref()?;
+
+        let missing_names: HashSet<&str> = self
+            .missing_required_project_files
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect();
+
+        let statuses = self
+            .active_project_requirements()
+            .into_iter()
+            .map(|file| {
+                let satisfied = !missing_names.contains(file.name.as_str());
+                ProjectRequirementStatus { file, satisfied }
+            })
+            .collect::<Vec<_>>();
+
+        Some(statuses)
     }
 
     pub(crate) fn pending_pack_missing_files(&self) -> Option<&[MissingRequiredFile]> {
@@ -2316,7 +2343,10 @@ mod packer_app_tests {
             "psu.toml should not be embedded in exported PSUs"
         );
         assert!(exported_root.join("title.cfg").exists());
-        assert!(exported_root.join("icon.icn").exists());
+        assert!(exported_root.join("icon.sys").exists());
+        assert!(exported_root.join("list.icn").exists());
+        assert!(exported_root.join("copy.icn").exists());
+        assert!(exported_root.join("del.icn").exists());
         assert!(exported_root.join("EXTRA.BIN").exists());
     }
 
