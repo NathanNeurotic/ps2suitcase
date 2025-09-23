@@ -85,7 +85,7 @@ This windowed utility mirrors the CLI packer with a simplified layout for quick 
    cargo build -p suitcase --release
    ```
 2. (Windows/Linux) Ship the `target/release/suitcase(.exe)` binary together with the `assets` directory if you need to provide templates or icons alongside the executable.
-   - Note: legacy decorative PNGs (`psupackergui.png`, `Polished Gold Card on Checkered Background.png`, and `goldframe.png`) were removed because they were unused at build time. Downstream bundles no longer need to ship them.
+   - Note: legacy decorative PNGs (`psupackergui.png`, `Polished Gold Card on Checkered Background.png`, `goldframe.png`, `framedbutton.png`, `circular.png`, and `blank.png`) were removed because they were unused at build time. Downstream bundles no longer need to ship them.
 3. (macOS) After building, create an application bundle:
    ```bash
    cargo run -p xtask-build-app
