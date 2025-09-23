@@ -5,7 +5,6 @@ members = [
     "crates/macros",
     "crates/ps2-filetypes",
     "crates/ps2-mcm",
-    "crates/ps2-psupacker",
     "crates/xtask-build-app",
     "crates/memcard",
     "crates/psu-packer",
