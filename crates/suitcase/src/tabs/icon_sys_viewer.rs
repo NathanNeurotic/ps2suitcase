@@ -2,10 +2,13 @@ use crate::tabs::Tab;
 use crate::{AppState, VirtualFile};
 use eframe::egui;
 use eframe::egui::{
-    vec2, Color32, CornerRadius, Grid, Id, PopupCloseBehavior, Response, Rgba, TextEdit, Ui,
+    vec2, Color32, CornerRadius, Grid, Id, PopupCloseBehavior, Response, TextEdit, Ui,
 };
 use ps2_filetypes::color::Color;
 use ps2_filetypes::{ColorF, IconSys, Vector};
+use psu_packer::{
+    color_f_to_rgba, color_to_normalized_rgba, normalized_rgba_to_color, rgba_to_color_f,
+};
 use relative_path::PathExt;
 use std::ops::Add;
 use std::path::PathBuf;
@@ -18,52 +21,33 @@ pub struct PS2RgbaInterface {
 
 impl PS2RgbaInterface {
     pub fn build_from_color_f(color_f: ColorF) -> Self {
+        let rgba = color_f_to_rgba(color_f);
         Self {
-            rgb: [color_f.r, color_f.g, color_f.b],
-            alpha: color_f.a,
+            rgb: [rgba[0], rgba[1], rgba[2]],
+            alpha: rgba[3],
         }
     }
     pub fn build_from_color(color: Color) -> Self {
+        let rgba = color_to_normalized_rgba(color);
         Self {
-            rgb: [
-                Self::convert_color_to_float(color.r),
-                Self::convert_color_to_float(color.g),
-                Self::convert_color_to_float(color.b),
-            ],
-            alpha: Self::convert_color_to_float(color.a),
+            rgb: [rgba[0], rgba[1], rgba[2]],
+            alpha: rgba[3],
         }
     }
 
     pub fn to_color_f(&self) -> ColorF {
-        ColorF {
-            r: self.rgb[0],
-            g: self.rgb[1],
-            b: self.rgb[2],
-            a: self.alpha,
-        }
+        rgba_to_color_f([self.rgb[0], self.rgb[1], self.rgb[2], self.alpha])
     }
 
     pub fn to_color(&self) -> Color {
-        Color {
-            r: Self::convert_color_to_int(self.rgb[0]),
-            g: Self::convert_color_to_int(self.rgb[1]),
-            b: Self::convert_color_to_int(self.rgb[2]),
-            a: Self::convert_color_to_int(self.alpha),
-        }
-    }
-
-    pub fn convert_color_to_float(color: u8) -> f32 {
-        color as f32 / 255.0
-    }
-
-    pub fn convert_color_to_int(color: f32) -> u8 {
-        (color * 255.0) as u8
+        normalized_rgba_to_color([self.rgb[0], self.rgb[1], self.rgb[2], self.alpha])
     }
 }
 
 impl From<PS2RgbaInterface> for Color32 {
     fn from(value: PS2RgbaInterface) -> Self {
-        Rgba::from_rgb(value.rgb[0], value.rgb[1], value.rgb[2]).into()
+        let color = value.to_color();
+        Color32::from_rgba_unmultiplied(color.r, color.g, color.b, color.a)
     }
 }
 
@@ -413,6 +397,8 @@ fn draw_background(ui: &mut Ui, colors: &[PS2RgbaInterface; 4]) {
 mod tests {
     use super::*;
     use crate::tabs::Tab;
+    use eframe::egui::{self, CentralPanel};
+    use psu_packer::IconSysConfig;
     use tempfile::tempdir;
 
     #[test]
@@ -499,5 +485,52 @@ mod tests {
         assert_eq!(reloaded_icon_sys.light_directions[0].x, light_direction.x);
         assert_eq!(reloaded_icon_sys.light_directions[0].y, light_direction.y);
         assert_eq!(reloaded_icon_sys.light_directions[0].z, light_direction.z);
+    }
+
+    #[test]
+    fn icon_sys_viewer_renders_default_icon() {
+        let temp_dir = tempdir().expect("failed to create temp dir");
+        let icon_sys_path = temp_dir.path().join("icon.sys");
+
+        let icon_sys = IconSys {
+            flags: 0,
+            linebreak_pos: 0,
+            background_transparency: IconSysConfig::default_background_transparency(),
+            background_colors: IconSysConfig::default_background_colors().map(Into::into),
+            light_directions: IconSysConfig::default_light_directions().map(Into::into),
+            light_colors: IconSysConfig::default_light_colors().map(Into::into),
+            ambient_color: IconSysConfig::default_ambient_color().into(),
+            title: "DEFAULT".into(),
+            icon_file: "list.icn".into(),
+            icon_copy_file: "copy.icn".into(),
+            icon_delete_file: "del.icn".into(),
+        };
+
+        let bytes = icon_sys.to_bytes().expect("failed to serialize icon.sys");
+        std::fs::write(&icon_sys_path, &bytes).expect("failed to write icon.sys");
+
+        let virtual_file = VirtualFile {
+            name: "icon.sys".into(),
+            file_path: icon_sys_path.clone(),
+            size: bytes.len() as u64,
+        };
+
+        let mut app_state = AppState::new();
+        app_state.opened_folder = Some(temp_dir.path().to_path_buf());
+
+        let mut viewer = IconSysViewer::new(&virtual_file, &app_state);
+        let ctx = egui::Context::default();
+        ctx.begin_frame(egui::RawInput::default());
+        CentralPanel::default().show(&ctx, |ui| {
+            viewer.show(ui, &mut app_state);
+        });
+        let output = ctx.end_frame();
+
+        assert!(output.shapes.iter().any(|shape| !shape.is_empty()));
+        assert_eq!(
+            viewer.background_transparency,
+            icon_sys.background_transparency
+        );
+        assert_eq!(viewer.ambient_color.to_color_f(), icon_sys.ambient_color);
     }
 }

@@ -10,8 +10,11 @@ use crate::ui::theme;
 use chrono::NaiveDateTime;
 use eframe::egui::{self, Widget};
 use indexmap::IndexMap;
-use ps2_filetypes::{sjis, templates, IconSys, PSUEntryKind, TitleCfg, PSU};
-use psu_packer::{ColorConfig, ColorFConfig, IconSysConfig, VectorConfig};
+use ps2_filetypes::{templates, IconSys, PSUEntryKind, TitleCfg, PSU};
+use psu_packer::{
+    split_icon_sys_title, ColorConfig, ColorFConfig, IconSysConfig, VectorConfig,
+    ICON_SYS_FLAG_OPTIONS, ICON_SYS_TITLE_CHAR_LIMIT,
+};
 use tempfile::{tempdir, TempDir};
 use toml::Table;
 
@@ -23,10 +26,6 @@ use sas_timestamps::TimestampRules;
 pub use ui::{dialogs, file_picker, pack_controls};
 
 pub(crate) const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
-pub(crate) const ICON_SYS_FLAG_OPTIONS: &[(u16, &str)] =
-    &[(0, "Save Data"), (1, "System Software"), (4, "Settings")];
-pub(crate) const ICON_SYS_TITLE_CHAR_LIMIT: usize = 16;
-const ICON_SYS_UNSUPPORTED_CHAR_PLACEHOLDER: char = '\u{FFFD}';
 const TIMESTAMP_RULES_FILE: &str = "timestamp_rules.json";
 pub(crate) const REQUIRED_PROJECT_FILES: &[&str] =
     &["list.icn", "copy.icn", "del.icn", "title.cfg", "icon.sys"];
@@ -116,54 +115,6 @@ impl MissingRequiredFile {
             reason: MissingFileReason::TimestampAutomation,
         }
     }
-}
-
-fn split_icon_sys_title(title: &str, break_index: usize) -> (String, String) {
-    let sanitized_chars: Vec<char> = title
-        .chars()
-        .map(|c| {
-            if c.is_control() {
-                ICON_SYS_UNSUPPORTED_CHAR_PLACEHOLDER
-            } else {
-                c
-            }
-        })
-        .collect();
-
-    let mut remaining_bytes = break_index;
-    let mut break_in_chars = 0usize;
-    if remaining_bytes > 0 {
-        for ch in title.chars() {
-            let mut utf8 = [0u8; 4];
-            let encoded_len = sjis::encode_sjis(ch.encode_utf8(&mut utf8))
-                .map(|bytes| bytes.len())
-                .unwrap_or(1)
-                .max(1);
-
-            if remaining_bytes < encoded_len {
-                break;
-            }
-            remaining_bytes -= encoded_len;
-            break_in_chars += 1;
-            if remaining_bytes == 0 {
-                break;
-            }
-        }
-    }
-
-    let break_index = break_in_chars.min(sanitized_chars.len());
-    let line1_count = break_index.min(ICON_SYS_TITLE_CHAR_LIMIT);
-    let skip_count = line1_count;
-
-    let line1: String = sanitized_chars.iter().take(line1_count).copied().collect();
-    let line2: String = sanitized_chars
-        .iter()
-        .skip(skip_count)
-        .take(ICON_SYS_TITLE_CHAR_LIMIT)
-        .copied()
-        .collect();
-
-    (line1, line2)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3137,7 +3088,7 @@ impl<'a> Widget for EditorTabWidget<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ps2_filetypes::sjis;
+    use psu_packer::shift_jis_byte_length;
     use psu_packer::IconSysFlags;
     use std::fs;
     use tempfile::tempdir;
@@ -3258,7 +3209,7 @@ linebreak_pos = 5
 
         let icon_sys = IconSys {
             flags: 4,
-            linebreak_pos: sjis::encode_sjis("メモリー").unwrap().len() as u16,
+            linebreak_pos: shift_jis_byte_length("メモリー").unwrap() as u16,
             background_transparency: IconSysConfig::default_background_transparency(),
             background_colors: IconSysConfig::default_background_colors().map(Into::into),
             light_directions: IconSysConfig::default_light_directions().map(Into::into),
@@ -3284,7 +3235,7 @@ linebreak_pos = 5
         let icon_cfg = IconSysConfig {
             flags: IconSysFlags::new(1),
             title: title.to_string(),
-            linebreak_pos: Some(sjis::encode_sjis("メモリー").unwrap().len() as u16),
+            linebreak_pos: Some(shift_jis_byte_length("メモリー").unwrap() as u16),
             preset: None,
             background_transparency: None,
             background_colors: None,
@@ -3389,17 +3340,14 @@ linebreak_pos = 5
     fn split_icon_sys_title_replaces_control_characters() {
         let (line1, line2) = split_icon_sys_title("A\u{0001}B\rC", 3);
 
-        assert_eq!(
-            line1,
-            format!("A{}B", ICON_SYS_UNSUPPORTED_CHAR_PLACEHOLDER)
-        );
-        assert_eq!(line2, format!("{}C", ICON_SYS_UNSUPPORTED_CHAR_PLACEHOLDER));
+        assert_eq!(line1, format!("A{}B", '\u{FFFD}'));
+        assert_eq!(line2, format!("{}C", '\u{FFFD}'));
     }
 
     #[test]
     fn split_icon_sys_title_uses_byte_based_breaks_for_multibyte_titles() {
         let title = "メモリーカード";
-        let break_bytes = sjis::encode_sjis("メモリー").unwrap().len();
+        let break_bytes = shift_jis_byte_length("メモリー").unwrap();
 
         let (line1, line2) = split_icon_sys_title(title, break_bytes);
 
@@ -3410,7 +3358,7 @@ linebreak_pos = 5
     #[test]
     fn split_icon_sys_title_preserves_second_line_for_partial_multibyte_breaks() {
         let title = "メモリーカード";
-        let break_bytes = sjis::encode_sjis("メモ").unwrap().len() + 1;
+        let break_bytes = shift_jis_byte_length("メモ").unwrap() + 1;
 
         let (line1, line2) = split_icon_sys_title(title, break_bytes);
 

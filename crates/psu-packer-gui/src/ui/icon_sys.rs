@@ -1,190 +1,13 @@
 use eframe::egui::{self, Color32, RichText};
 
-use crate::{
-    ui::theme, IconFlagSelection, PackerApp, ICON_SYS_FLAG_OPTIONS, ICON_SYS_TITLE_CHAR_LIMIT,
+use crate::{ui::theme, IconFlagSelection, PackerApp};
+use psu_packer::{
+    color_config_to_rgba, color_f_config_to_rgba, rgba_to_color_config, rgba_to_color_f_config,
+    sanitize_icon_sys_line, shift_jis_byte_length, ColorConfig, ColorFConfig, IconSysPreset,
+    VectorConfig, ICON_SYS_FLAG_OPTIONS, ICON_SYS_PRESETS, ICON_SYS_TITLE_CHAR_LIMIT,
 };
-use ps2_filetypes::sjis;
-use psu_packer::{ColorConfig, ColorFConfig, IconSysConfig, VectorConfig};
 
-const TITLE_CHAR_LIMIT: usize = ICON_SYS_TITLE_CHAR_LIMIT;
 const TITLE_INPUT_WIDTH: f32 = (ICON_SYS_TITLE_CHAR_LIMIT as f32) * 9.0;
-
-#[derive(Clone, Copy)]
-struct IconSysPreset {
-    id: &'static str,
-    label: &'static str,
-    background_transparency: u32,
-    background_colors: [ColorConfig; 4],
-    light_directions: [VectorConfig; 3],
-    light_colors: [ColorFConfig; 3],
-    ambient_color: ColorFConfig,
-}
-
-const ICON_SYS_PRESETS: &[IconSysPreset] = &[
-    IconSysPreset {
-        id: "default",
-        label: "Standard (PS2)",
-        background_transparency: IconSysConfig::default_background_transparency(),
-        background_colors: IconSysConfig::default_background_colors(),
-        light_directions: IconSysConfig::default_light_directions(),
-        light_colors: IconSysConfig::default_light_colors(),
-        ambient_color: IconSysConfig::default_ambient_color(),
-    },
-    IconSysPreset {
-        id: "cool_blue",
-        label: "Cool Blue",
-        background_transparency: 0,
-        background_colors: [
-            ColorConfig {
-                r: 0,
-                g: 32,
-                b: 96,
-                a: 0,
-            },
-            ColorConfig {
-                r: 0,
-                g: 48,
-                b: 128,
-                a: 0,
-            },
-            ColorConfig {
-                r: 0,
-                g: 64,
-                b: 160,
-                a: 0,
-            },
-            ColorConfig {
-                r: 0,
-                g: 16,
-                b: 48,
-                a: 0,
-            },
-        ],
-        light_directions: [
-            VectorConfig {
-                x: 0.0,
-                y: 0.0,
-                z: 1.0,
-                w: 0.0,
-            },
-            VectorConfig {
-                x: -0.5,
-                y: -0.5,
-                z: 0.5,
-                w: 0.0,
-            },
-            VectorConfig {
-                x: 0.5,
-                y: -0.5,
-                z: 0.5,
-                w: 0.0,
-            },
-        ],
-        light_colors: [
-            ColorFConfig {
-                r: 1.0,
-                g: 1.0,
-                b: 1.0,
-                a: 1.0,
-            },
-            ColorFConfig {
-                r: 0.5,
-                g: 0.5,
-                b: 0.6,
-                a: 1.0,
-            },
-            ColorFConfig {
-                r: 0.3,
-                g: 0.3,
-                b: 0.4,
-                a: 1.0,
-            },
-        ],
-        ambient_color: ColorFConfig {
-            r: 0.2,
-            g: 0.2,
-            b: 0.2,
-            a: 1.0,
-        },
-    },
-    IconSysPreset {
-        id: "warm_sunset",
-        label: "Warm Sunset",
-        background_transparency: 0,
-        background_colors: [
-            ColorConfig {
-                r: 128,
-                g: 48,
-                b: 16,
-                a: 0,
-            },
-            ColorConfig {
-                r: 176,
-                g: 72,
-                b: 32,
-                a: 0,
-            },
-            ColorConfig {
-                r: 208,
-                g: 112,
-                b: 48,
-                a: 0,
-            },
-            ColorConfig {
-                r: 96,
-                g: 32,
-                b: 16,
-                a: 0,
-            },
-        ],
-        light_directions: [
-            VectorConfig {
-                x: -0.2,
-                y: -0.4,
-                z: 0.8,
-                w: 0.0,
-            },
-            VectorConfig {
-                x: 0.0,
-                y: -0.6,
-                z: 0.6,
-                w: 0.0,
-            },
-            VectorConfig {
-                x: 0.3,
-                y: -0.5,
-                z: 0.7,
-                w: 0.0,
-            },
-        ],
-        light_colors: [
-            ColorFConfig {
-                r: 1.0,
-                g: 0.9,
-                b: 0.75,
-                a: 1.0,
-            },
-            ColorFConfig {
-                r: 0.9,
-                g: 0.6,
-                b: 0.3,
-                a: 1.0,
-            },
-            ColorFConfig {
-                r: 0.6,
-                g: 0.3,
-                b: 0.2,
-                a: 1.0,
-            },
-        ],
-        ambient_color: ColorFConfig {
-            r: 0.25,
-            g: 0.18,
-            b: 0.12,
-            a: 1.0,
-        },
-    },
-];
 
 pub(crate) fn icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
     ui.heading(theme::display_heading_text(ui, "icon.sys metadata"));
@@ -271,6 +94,10 @@ pub(crate) fn icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
     }
 }
 
+pub fn render_icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
+    icon_sys_editor(app, ui);
+}
+
 fn title_section(app: &mut PackerApp, ui: &mut egui::Ui) -> bool {
     let mut changed = false;
     ui.group(|ui| {
@@ -314,9 +141,8 @@ fn title_section(app: &mut PackerApp, ui: &mut egui::Ui) -> bool {
                         width = ICON_SYS_TITLE_CHAR_LIMIT
                     ));
 
-                    match sjis::encode_sjis(&app.icon_sys_title_line1) {
-                        Ok(bytes) => {
-                            let break_pos = bytes.len();
+                    match shift_jis_byte_length(&app.icon_sys_title_line1) {
+                        Ok(break_pos) => {
                             ui.small(format!("Shift-JIS byte length: {break_pos}"));
                             ui.small(format!("Line break position: {break_pos}"));
                         }
@@ -341,31 +167,14 @@ fn title_section(app: &mut PackerApp, ui: &mut egui::Ui) -> bool {
 
 fn title_input(ui: &mut egui::Ui, id: egui::Id, value: &mut String) -> bool {
     let mut edit = egui::TextEdit::singleline(value)
-        .char_limit(TITLE_CHAR_LIMIT)
+        .char_limit(ICON_SYS_TITLE_CHAR_LIMIT)
         .desired_width(TITLE_INPUT_WIDTH);
     edit = edit.id_source(id);
 
     let response = ui.add(edit);
     let mut changed = false;
     if response.changed() {
-        let mut sanitized = String::new();
-        let mut accepted_chars = 0usize;
-        for ch in value.chars() {
-            if ch.is_control() {
-                continue;
-            }
-
-            if accepted_chars >= TITLE_CHAR_LIMIT {
-                break;
-            }
-
-            sanitized.push(ch);
-            if sjis::is_roundtrip_sjis(&sanitized) {
-                accepted_chars += 1;
-            } else {
-                sanitized.pop();
-            }
-        }
+        let sanitized = sanitize_icon_sys_line(value, ICON_SYS_TITLE_CHAR_LIMIT);
         if *value != sanitized {
             *value = sanitized;
         }
@@ -374,7 +183,7 @@ fn title_input(ui: &mut egui::Ui, id: egui::Id, value: &mut String) -> bool {
 
     let char_count = value.chars().count();
     ui.small(format!(
-        "{char_count} / {TITLE_CHAR_LIMIT} characters (Shift-JIS compatible)"
+        "{char_count} / {ICON_SYS_TITLE_CHAR_LIMIT} characters (Shift-JIS compatible)"
     ));
     changed
 }
@@ -478,19 +287,22 @@ fn preset_preview(app: &PackerApp, ui: &mut egui::Ui) {
         ui.label("Background gradient");
         ui.horizontal(|ui| {
             for color in app.icon_sys_background_colors {
-                draw_color_swatch(ui, color32_from_color_config(color));
+                let rgba = color_config_to_rgba(color);
+                draw_color_swatch(ui, color32_from_rgba_u8(rgba));
             }
         });
 
         ui.label("Light colors");
         ui.horizontal(|ui| {
             for color in app.icon_sys_light_colors {
-                draw_color_swatch(ui, color32_from_color_f_config(color));
+                let rgba = color_f_config_to_rgba(color);
+                draw_color_swatch(ui, color32_from_rgba_f32(rgba));
             }
         });
 
         ui.label("Ambient");
-        draw_color_swatch(ui, color32_from_color_f_config(app.icon_sys_ambient_color));
+        let ambient = color_f_config_to_rgba(app.icon_sys_ambient_color);
+        draw_color_swatch(ui, color32_from_rgba_f32(ambient));
     });
 }
 
@@ -525,9 +337,11 @@ fn background_section(app: &mut PackerApp, ui: &mut egui::Ui) -> bool {
             .show(ui, |ui| {
                 for (index, color) in app.icon_sys_background_colors.iter_mut().enumerate() {
                     ui.label(format!("Color {}", index + 1));
-                    let mut display = color32_from_color_config(*color);
+                    let rgba = color_config_to_rgba(*color);
+                    let mut display = color32_from_rgba_u8(rgba);
                     if ui.color_edit_button_srgba(&mut display).changed() {
-                        *color = color_config_from_color32(display);
+                        let updated = [display.r(), display.g(), display.b(), display.a()];
+                        *color = rgba_to_color_config(updated);
                         background_changed = true;
                     }
                     ui.end_row();
@@ -558,9 +372,9 @@ fn lighting_section(app: &mut PackerApp, ui: &mut egui::Ui) -> bool {
             let mut light_dirty = false;
             ui.collapsing(format!("Light {}", index + 1), |ui| {
                 ui.label("Color");
-                let mut rgba = color_f_config_to_array(*color);
+                let mut rgba = color_f_config_to_rgba(*color);
                 if ui.color_edit_button_rgba_unmultiplied(&mut rgba).changed() {
-                    *color = array_to_color_f_config(rgba);
+                    *color = rgba_to_color_f_config(rgba);
                     light_dirty = true;
                 }
 
@@ -594,12 +408,12 @@ fn lighting_section(app: &mut PackerApp, ui: &mut egui::Ui) -> bool {
         }
 
         ui.label("Ambient color");
-        let mut ambient = color_f_config_to_array(app.icon_sys_ambient_color);
+        let mut ambient = color_f_config_to_rgba(app.icon_sys_ambient_color);
         if ui
             .color_edit_button_rgba_unmultiplied(&mut ambient)
             .changed()
         {
-            app.icon_sys_ambient_color = array_to_color_f_config(ambient);
+            app.icon_sys_ambient_color = rgba_to_color_f_config(ambient);
             lighting_changed = true;
         }
 
@@ -624,38 +438,39 @@ fn find_preset(id: &str) -> Option<&'static IconSysPreset> {
     ICON_SYS_PRESETS.iter().find(|preset| preset.id == id)
 }
 
-fn color32_from_color_config(color: ColorConfig) -> Color32 {
-    Color32::from_rgba_unmultiplied(color.r, color.g, color.b, color.a)
+#[derive(Clone, Debug, PartialEq)]
+pub struct IconSysSnapshot {
+    pub enabled: bool,
+    pub background_transparency: u32,
+    pub background_colors: [ColorConfig; 4],
+    pub light_directions: [VectorConfig; 3],
+    pub light_colors: [ColorFConfig; 3],
+    pub ambient_color: ColorFConfig,
+    pub selected_preset: Option<String>,
 }
 
-fn color32_from_color_f_config(color: ColorFConfig) -> Color32 {
+pub fn icon_sys_snapshot(app: &PackerApp) -> IconSysSnapshot {
+    IconSysSnapshot {
+        enabled: app.icon_sys_enabled,
+        background_transparency: app.icon_sys_background_transparency,
+        background_colors: app.icon_sys_background_colors,
+        light_directions: app.icon_sys_light_directions,
+        light_colors: app.icon_sys_light_colors,
+        ambient_color: app.icon_sys_ambient_color,
+        selected_preset: app.icon_sys_selected_preset.clone(),
+    }
+}
+
+fn color32_from_rgba_u8(rgba: [u8; 4]) -> Color32 {
+    Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3])
+}
+
+fn color32_from_rgba_f32(rgba: [f32; 4]) -> Color32 {
     let clamp = |value: f32| -> u8 { (value.clamp(0.0, 1.0) * 255.0).round() as u8 };
     Color32::from_rgba_unmultiplied(
-        clamp(color.r),
-        clamp(color.g),
-        clamp(color.b),
-        clamp(color.a),
+        clamp(rgba[0]),
+        clamp(rgba[1]),
+        clamp(rgba[2]),
+        clamp(rgba[3]),
     )
-}
-
-fn color_config_from_color32(color: Color32) -> ColorConfig {
-    ColorConfig {
-        r: color.r(),
-        g: color.g(),
-        b: color.b(),
-        a: color.a(),
-    }
-}
-
-fn color_f_config_to_array(color: ColorFConfig) -> [f32; 4] {
-    [color.r, color.g, color.b, color.a]
-}
-
-fn array_to_color_f_config(color: [f32; 4]) -> ColorFConfig {
-    ColorFConfig {
-        r: color[0],
-        g: color[1],
-        b: color[2],
-        a: color[3],
-    }
 }
