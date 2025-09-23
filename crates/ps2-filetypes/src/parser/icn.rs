@@ -1,5 +1,8 @@
 use crate::color::Color;
-use crate::{AnimationHeader, AnimationShape, BinReader, Frame, ICNHeader, IcnTexture, Key, Normal, Vertex, ICN, ICN_MAGIC, TEXTURE_SIZE, UV};
+use crate::{
+    AnimationHeader, AnimationShape, BinReader, Frame, ICNHeader, IcnTexture, Key, Normal, Vertex,
+    ICN, ICN_MAGIC, TEXTURE_SIZE, UV,
+};
 use byteorder::{ReadBytesExt, LE};
 use image::codecs::png::PngEncoder;
 use image::RgbaImage;
@@ -58,8 +61,7 @@ impl ICN {
         }
 
         let encoder = PngEncoder::new(&mut png_data);
-        img
-            .write_with_encoder(encoder)
+        img.write_with_encoder(encoder)
             .expect("Failed to write PNG data");
         png_data
     }

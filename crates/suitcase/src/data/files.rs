@@ -1,8 +1,8 @@
 use crate::data::virtual_file::VirtualFile;
+use crate::io::calculate_size::calculate_size;
 use std::ffi::OsStr;
 use std::ops::Index;
 use std::path::Path;
-use crate::io::calculate_size::calculate_size;
 
 #[derive(Default)]
 pub struct Files(pub Vec<VirtualFile>, u64);

@@ -4,14 +4,14 @@ use chrono::{Datelike, NaiveDateTime, Timelike};
 use std::io::Write;
 
 pub struct PSUWriter {
-    psu: PSU
+    psu: PSU,
 }
 
 impl PSUWriter {
     pub fn new(psu: PSU) -> Self {
         Self { psu }
     }
-    
+
     fn write_timestamp(&self, timestamp: NaiveDateTime) -> std::io::Result<Vec<u8>> {
         let mut data = vec![];
         data.write_u8(0)?;
@@ -20,11 +20,11 @@ impl PSUWriter {
         data.write_u8(timestamp.hour() as u8)?;
         data.write_u8(timestamp.day() as u8)?;
         data.write_u8(timestamp.month() as u8)?;
-        data.write_u16::<LE>(timestamp.year() as u16)?; 
-        
+        data.write_u16::<LE>(timestamp.year() as u16)?;
+
         Ok(data)
     }
-    
+
     fn write_string(&self, string: String) -> std::io::Result<Vec<u8>> {
         let remainder = 448 - string.len();
         let mut data = vec![];
@@ -33,9 +33,9 @@ impl PSUWriter {
         }
         data.extend(vec![0; remainder]);
 
-        Ok(data) 
+        Ok(data)
     }
-    
+
     fn write_entry(&self, entry: &PSUEntry) -> std::io::Result<Vec<u8>> {
         let mut data: Vec<u8> = vec![];
         data.write_u16::<LE>(entry.id)?;
@@ -60,7 +60,7 @@ impl PSUWriter {
             }
         }
 
-        Ok(data) 
+        Ok(data)
     }
 
     pub fn to_bytes(&self) -> std::io::Result<Vec<u8>> {

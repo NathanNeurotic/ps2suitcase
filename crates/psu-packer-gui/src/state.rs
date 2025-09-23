@@ -14,14 +14,11 @@ use crate::{
 };
 use chrono::NaiveDateTime;
 use eframe::egui::{self, Widget};
-use icon_sys_ui::IconFlagSelection;
+use icon_sys_ui::IconSysState;
 use indexmap::IndexMap;
 use ps2_filetypes::{templates, IconSys, PSUEntryKind, TitleCfg, PSU};
 use psu_packer::sas::CategoryRule;
-use psu_packer::{
-    split_icon_sys_title, ColorConfig, ColorFConfig, IconSysConfig, VectorConfig,
-    ICON_SYS_FLAG_OPTIONS,
-};
+use psu_packer::split_icon_sys_title;
 use tempfile::{tempdir, TempDir};
 use toml::Table;
 
@@ -631,14 +628,7 @@ pub struct PackerApp {
     pub(crate) icon_sys_enabled: bool,
     pub(crate) icon_sys_title_line1: String,
     pub(crate) icon_sys_title_line2: String,
-    pub(crate) icon_sys_flag_selection: IconFlagSelection,
-    pub(crate) icon_sys_custom_flag: u16,
-    pub(crate) icon_sys_background_transparency: u32,
-    pub(crate) icon_sys_background_colors: [ColorConfig; 4],
-    pub(crate) icon_sys_light_directions: [VectorConfig; 3],
-    pub(crate) icon_sys_light_colors: [ColorFConfig; 3],
-    pub(crate) icon_sys_ambient_color: ColorFConfig,
-    pub(crate) icon_sys_selected_preset: Option<String>,
+    pub(crate) icon_sys_state: IconSysState,
     pub(crate) icon_sys_use_existing: bool,
     pub(crate) icon_sys_existing: Option<IconSys>,
     pub(crate) zoom_factor: f32,
@@ -726,14 +716,7 @@ impl Default for PackerApp {
             icon_sys_enabled: false,
             icon_sys_title_line1: String::new(),
             icon_sys_title_line2: String::new(),
-            icon_sys_flag_selection: IconFlagSelection::Preset(0),
-            icon_sys_custom_flag: ICON_SYS_FLAG_OPTIONS[0].0,
-            icon_sys_background_transparency: IconSysConfig::default_background_transparency(),
-            icon_sys_background_colors: IconSysConfig::default_background_colors(),
-            icon_sys_light_directions: IconSysConfig::default_light_directions(),
-            icon_sys_light_colors: IconSysConfig::default_light_colors(),
-            icon_sys_ambient_color: IconSysConfig::default_ambient_color(),
-            icon_sys_selected_preset: None,
+            icon_sys_state: IconSysState::default(),
             icon_sys_use_existing: false,
             icon_sys_existing: None,
             zoom_factor: 1.0,
@@ -1093,14 +1076,7 @@ impl PackerApp {
         self.icon_sys_existing = None;
         self.icon_sys_title_line1.clear();
         self.icon_sys_title_line2.clear();
-        self.icon_sys_flag_selection = IconFlagSelection::Preset(0);
-        self.icon_sys_custom_flag = ICON_SYS_FLAG_OPTIONS[0].0;
-        self.icon_sys_background_transparency = IconSysConfig::default_background_transparency();
-        self.icon_sys_background_colors = IconSysConfig::default_background_colors();
-        self.icon_sys_light_directions = IconSysConfig::default_light_directions();
-        self.icon_sys_light_colors = IconSysConfig::default_light_colors();
-        self.icon_sys_ambient_color = IconSysConfig::default_ambient_color();
-        self.icon_sys_selected_preset = None;
+        self.icon_sys_state = IconSysState::default();
     }
 
     pub(crate) fn apply_icon_sys_config(
@@ -1108,168 +1084,35 @@ impl PackerApp {
         icon_cfg: psu_packer::IconSysConfig,
         icon_sys_fallback: Option<&IconSys>,
     ) {
-        let flag_value = icon_cfg.flags.value();
         self.icon_sys_enabled = true;
         self.icon_sys_use_existing = false;
-        self.icon_sys_custom_flag = flag_value;
-        if let Some(index) = ICON_SYS_FLAG_OPTIONS
-            .iter()
-            .position(|(value, _)| *value == flag_value)
-        {
-            self.icon_sys_flag_selection = IconFlagSelection::Preset(index);
-        } else {
-            self.icon_sys_flag_selection = IconFlagSelection::Custom;
-        }
+        self.icon_sys_state
+            .apply_icon_sys_config(&icon_cfg, icon_sys_fallback);
 
         let break_index = icon_cfg.linebreak_position() as usize;
         let (line1, line2) = split_icon_sys_title(&icon_cfg.title, break_index);
         self.icon_sys_title_line1 = line1;
         self.icon_sys_title_line2 = line2;
-
-        self.icon_sys_background_transparency =
-            icon_cfg.background_transparency.unwrap_or_else(|| {
-                icon_sys_fallback
-                    .map(|icon_sys| icon_sys.background_transparency)
-                    .unwrap_or_else(IconSysConfig::default_background_transparency)
-            });
-
-        self.icon_sys_background_colors = if icon_cfg.background_colors.is_some() {
-            icon_cfg.background_colors_array()
-        } else if let Some(icon_sys) = icon_sys_fallback {
-            let mut colors = IconSysConfig::default_background_colors();
-            for (target, color) in colors.iter_mut().zip(icon_sys.background_colors.iter()) {
-                *target = ColorConfig {
-                    r: color.r,
-                    g: color.g,
-                    b: color.b,
-                    a: color.a,
-                };
-            }
-            colors
-        } else {
-            IconSysConfig::default_background_colors()
-        };
-
-        self.icon_sys_light_directions = if icon_cfg.light_directions.is_some() {
-            icon_cfg.light_directions_array()
-        } else if let Some(icon_sys) = icon_sys_fallback {
-            let mut directions = IconSysConfig::default_light_directions();
-            for (target, direction) in directions.iter_mut().zip(icon_sys.light_directions.iter()) {
-                *target = VectorConfig {
-                    x: direction.x,
-                    y: direction.y,
-                    z: direction.z,
-                    w: direction.w,
-                };
-            }
-            directions
-        } else {
-            IconSysConfig::default_light_directions()
-        };
-
-        self.icon_sys_light_colors = if icon_cfg.light_colors.is_some() {
-            icon_cfg.light_colors_array()
-        } else if let Some(icon_sys) = icon_sys_fallback {
-            let mut colors = IconSysConfig::default_light_colors();
-            for (target, color) in colors.iter_mut().zip(icon_sys.light_colors.iter()) {
-                *target = ColorFConfig {
-                    r: color.r,
-                    g: color.g,
-                    b: color.b,
-                    a: color.a,
-                };
-            }
-            colors
-        } else {
-            IconSysConfig::default_light_colors()
-        };
-
-        self.icon_sys_ambient_color = if let Some(color) = icon_cfg.ambient_color {
-            color
-        } else if let Some(icon_sys) = icon_sys_fallback {
-            ColorFConfig {
-                r: icon_sys.ambient_color.r,
-                g: icon_sys.ambient_color.g,
-                b: icon_sys.ambient_color.b,
-                a: icon_sys.ambient_color.a,
-            }
-        } else {
-            IconSysConfig::default_ambient_color()
-        };
-        self.icon_sys_selected_preset = icon_cfg.preset.clone();
     }
 
-    pub(crate) fn apply_icon_sys_file(&mut self, icon_sys: &IconSys) {
-        let flag_value = icon_sys.flags;
+    pub fn apply_icon_sys_file(&mut self, icon_sys: &IconSys) {
         self.icon_sys_enabled = true;
         self.icon_sys_use_existing = true;
         self.icon_sys_existing = Some(icon_sys.clone());
-        self.icon_sys_custom_flag = flag_value;
-        if let Some(index) = ICON_SYS_FLAG_OPTIONS
-            .iter()
-            .position(|(value, _)| *value == flag_value)
-        {
-            self.icon_sys_flag_selection = IconFlagSelection::Preset(index);
-        } else {
-            self.icon_sys_flag_selection = IconFlagSelection::Custom;
-        }
+        self.icon_sys_state.apply_icon_sys(icon_sys);
 
         let break_index = icon_sys.linebreak_pos as usize;
         let (line1, line2) = split_icon_sys_title(&icon_sys.title, break_index);
         self.icon_sys_title_line1 = line1;
         self.icon_sys_title_line2 = line2;
+    }
 
-        self.icon_sys_background_transparency = icon_sys.background_transparency;
-        for (target, color) in self
-            .icon_sys_background_colors
-            .iter_mut()
-            .zip(icon_sys.background_colors.iter())
-        {
-            *target = ColorConfig {
-                r: color.r,
-                g: color.g,
-                b: color.b,
-                a: color.a,
-            };
-        }
-
-        for (target, direction) in self
-            .icon_sys_light_directions
-            .iter_mut()
-            .zip(icon_sys.light_directions.iter())
-        {
-            *target = VectorConfig {
-                x: direction.x,
-                y: direction.y,
-                z: direction.z,
-                w: direction.w,
-            };
-        }
-
-        for (target, color) in self
-            .icon_sys_light_colors
-            .iter_mut()
-            .zip(icon_sys.light_colors.iter())
-        {
-            *target = ColorFConfig {
-                r: color.r,
-                g: color.g,
-                b: color.b,
-                a: color.a,
-            };
-        }
-
-        self.icon_sys_ambient_color = ColorFConfig {
-            r: icon_sys.ambient_color.r,
-            g: icon_sys.ambient_color.g,
-            b: icon_sys.ambient_color.b,
-            a: icon_sys.ambient_color.a,
-        };
-        self.icon_sys_selected_preset = None;
+    pub fn icon_sys_state(&self) -> &IconSysState {
+        &self.icon_sys_state
     }
 
     pub(crate) fn clear_icon_sys_preset(&mut self) {
-        self.icon_sys_selected_preset = None;
+        self.icon_sys_state.clear_preset();
     }
 
     pub(crate) fn reset_metadata_fields(&mut self) {
@@ -1443,8 +1286,8 @@ impl PackerApp {
 
     pub(crate) fn selected_icon_flag_value(&self) -> Result<u16, String> {
         icon_sys_ui::selected_icon_flag_value(
-            self.icon_sys_flag_selection,
-            self.icon_sys_custom_flag,
+            self.icon_sys_state.flag_selection,
+            self.icon_sys_state.custom_flag,
         )
     }
 
@@ -2939,8 +2782,10 @@ impl<'a> Widget for EditorTabWidget<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "psu-toml-editor")]
+    use icon_sys_ui::IconFlagSelection;
     use psu_packer::shift_jis_byte_length;
-    use psu_packer::IconSysFlags;
+    use psu_packer::{IconSysConfig, IconSysFlags};
     use std::fs;
     use tempfile::tempdir;
 
@@ -3043,10 +2888,10 @@ linebreak_pos = 5
         assert_eq!(app.timestamp_strategy, TimestampStrategy::Manual);
         assert!(app.icon_sys_enabled);
         assert!(matches!(
-            app.icon_sys_flag_selection,
+            app.icon_sys_state.flag_selection,
             IconFlagSelection::Preset(1)
         ));
-        assert_eq!(app.icon_sys_custom_flag, 1);
+        assert_eq!(app.icon_sys_state.custom_flag, 1);
         assert_eq!(app.icon_sys_title_line1, "HELLO");
         assert_eq!(app.icon_sys_title_line2, "WORLD");
         assert!(!app.psu_toml_sync_blocked);

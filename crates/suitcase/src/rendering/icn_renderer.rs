@@ -1,13 +1,13 @@
-use cgmath::{vec3, Matrix4, Vector3, Vector4};
-use eframe::glow;
-use ps2_filetypes::color::Color;
-use ps2_filetypes::{ColorF, Key, Vector, ICN};
 use crate::rendering::animation::Timeline;
 use crate::rendering::buffer::Buffer;
 use crate::rendering::orbit_camera::OrbitCamera;
 use crate::rendering::program::Program;
 use crate::rendering::texture::Texture;
 use crate::rendering::vertex_array::{attributes, VertexArray};
+use cgmath::{vec3, Matrix4, Vector3, Vector4};
+use eframe::glow;
+use ps2_filetypes::color::Color;
+use ps2_filetypes::{ColorF, Key, Vector, ICN};
 
 pub struct ICNRenderer {
     model_shader: Program,
@@ -51,7 +51,13 @@ impl ICNRenderer {
             for (i, frame) in icn.frames.iter().enumerate() {
                 let mut keys = frame.keys.clone();
                 if i == 0 {
-                    keys.insert(0, Key{time: 0.0, value: 1.0});
+                    keys.insert(
+                        0,
+                        Key {
+                            time: 0.0,
+                            value: 1.0,
+                        },
+                    );
                 }
                 timelines.push(Timeline::new(keys))
             }
@@ -59,13 +65,13 @@ impl ICNRenderer {
             for shape in icn.animation_shapes.iter() {
                 let vertices = shape
                     .iter()
-                    .flat_map(|vertex|
+                    .flat_map(|vertex| {
                         [
                             vertex.x as f32 / 4096.0,
                             -vertex.y as f32 / 4096.0,
                             -vertex.z as f32 / 4096.0,
                         ]
-                    )
+                    })
                     .collect::<Vec<f32>>();
                 shapes.push(vertices);
             }
@@ -92,17 +98,19 @@ impl ICNRenderer {
             let model = VertexArray::new(
                 gl,
                 &model_shader,
-                [(
-                    Buffer::new(gl, &shapes[0]),
-                    attributes()
-                        .float("position", 3)
-                ), (
-                    Buffer::new(gl, &data),
-                    attributes()
-                        // .float("color", 4)
-                        .float("normal", 3)
-                        .float("uv", 2),
-                    )],
+                [
+                    (
+                        Buffer::new(gl, &shapes[0]),
+                        attributes().float("position", 3),
+                    ),
+                    (
+                        Buffer::new(gl, &data),
+                        attributes()
+                            // .float("color", 4)
+                            .float("normal", 3)
+                            .float("uv", 2),
+                    ),
+                ],
                 glow::TRIANGLES,
             );
 
@@ -156,13 +164,21 @@ impl ICNRenderer {
         self.model_texture.set(gl, &image);
     }
 
-    pub fn paint(&mut self, gl: &glow::Context, aspect_ratio: f32, orbit_camera: OrbitCamera, frame: u32, light_colors: [ColorF; 3], light_positions: [Vector; 3], ambient_color: ColorF) {
+    pub fn paint(
+        &mut self,
+        gl: &glow::Context,
+        aspect_ratio: f32,
+        orbit_camera: OrbitCamera,
+        frame: u32,
+        light_colors: [ColorF; 3],
+        light_positions: [Vector; 3],
+        ambient_color: ColorF,
+    ) {
         use glow::HasContext as _;
 
         let projection = cgmath::perspective(cgmath::Deg(45.0), aspect_ratio, 0.1, 100.0);
         let view = orbit_camera.view_matrix();
         let model: Matrix4<f32> = Matrix4::from_translation(vec3(0.0, 0.0, 0.0));
-
 
         let mut vertices = vec![0f32; self.shapes[0].len()];
 
@@ -178,12 +194,11 @@ impl ICNRenderer {
         if !self.timelines.is_empty() {
             for (j, shape) in self.shapes.iter().enumerate() {
                 for (i, vertex) in shape.iter().enumerate() {
-                    vertices[i] += *vertex * weights[j]/sum;
+                    vertices[i] += *vertex * weights[j] / sum;
                 }
             }
             self.model.buffer(0).set(gl, &vertices);
         }
-
 
         unsafe {
             gl.enable(glow::DEPTH_TEST);
@@ -208,11 +223,38 @@ impl ICNRenderer {
             self.model_shader.set(gl, "projection", projection);
             self.model_shader.set(gl, "view", view);
             self.model_shader.set(gl, "model", model);
-            self.model_shader.set(gl, "ambient", Vector4::new(ambient_color.r, ambient_color.g, ambient_color.b, ambient_color.a));
+            self.model_shader.set(
+                gl,
+                "ambient",
+                Vector4::new(
+                    ambient_color.r,
+                    ambient_color.g,
+                    ambient_color.b,
+                    ambient_color.a,
+                ),
+            );
 
             for i in 0..3 {
-                self.model_shader.set(gl, format!("lights[{i}].color").as_str(), Vector4::new(light_colors[i].r, light_colors[i].g, light_colors[i].b, light_colors[i].a));
-                self.model_shader.set(gl, format!("lights[{i}].position").as_str(), Vector4::new(light_positions[i].x, 1.0-light_positions[i].y, 1.0-light_positions[i].z, light_positions[i].w));
+                self.model_shader.set(
+                    gl,
+                    format!("lights[{i}].color").as_str(),
+                    Vector4::new(
+                        light_colors[i].r,
+                        light_colors[i].g,
+                        light_colors[i].b,
+                        light_colors[i].a,
+                    ),
+                );
+                self.model_shader.set(
+                    gl,
+                    format!("lights[{i}].position").as_str(),
+                    Vector4::new(
+                        light_positions[i].x,
+                        1.0 - light_positions[i].y,
+                        1.0 - light_positions[i].z,
+                        light_positions[i].w,
+                    ),
+                );
             }
 
             self.model.render(gl);
@@ -258,15 +300,15 @@ pub fn generate_wireframe_box(size: Vector3<f32>, center: Vector3<f32>) -> Vec<f
         (2, 6),
         (3, 7), // vertical lines
     ]
-        .iter()
-        .map(|(start, end)| {
-            let a = corners[*start] + center;
-            let b = corners[*end] + center;
+    .iter()
+    .map(|(start, end)| {
+        let a = corners[*start] + center;
+        let b = corners[*end] + center;
 
-            vec![a.x, a.y, a.z, b.x, b.y, b.z]
-        })
-        .flatten()
-        .collect::<Vec<_>>()
+        vec![a.x, a.y, a.z, b.x, b.y, b.z]
+    })
+    .flatten()
+    .collect::<Vec<_>>()
 }
 
 fn generate_grid_lines(size: i32, step: f32) -> Vec<f32> {

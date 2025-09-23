@@ -12,17 +12,34 @@ impl Buffer {
 
         unsafe {
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(buffer));
-            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, core::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * size_of::<f32>()), glow::STATIC_DRAW);
+            gl.buffer_data_u8_slice(
+                glow::ARRAY_BUFFER,
+                core::slice::from_raw_parts(
+                    data.as_ptr() as *const u8,
+                    data.len() * size_of::<f32>(),
+                ),
+                glow::STATIC_DRAW,
+            );
         }
 
-        Buffer { buffer, size: (data.len() * size_of::<f32>())  as i32 }
+        Buffer {
+            buffer,
+            size: (data.len() * size_of::<f32>()) as i32,
+        }
     }
 
     pub fn set(&self, gl: &glow::Context, data: &[f32]) {
         assert_eq!(data.len() * size_of::<f32>(), self.size as usize);
         unsafe {
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.buffer));
-            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, core::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * size_of::<f32>()), glow::STATIC_DRAW);
+            gl.buffer_data_u8_slice(
+                glow::ARRAY_BUFFER,
+                core::slice::from_raw_parts(
+                    data.as_ptr() as *const u8,
+                    data.len() * size_of::<f32>(),
+                ),
+                glow::STATIC_DRAW,
+            );
         }
     }
 

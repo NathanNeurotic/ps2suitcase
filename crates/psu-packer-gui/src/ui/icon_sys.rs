@@ -3,10 +3,9 @@ use eframe::egui;
 use crate::{ui::theme, PackerApp};
 use icon_sys_ui::{
     background_editor, flag_selector, lighting_editor, preset_selector, title_editor,
-    BackgroundSectionState, FlagSectionState, LightingSectionState, PresetPreviewData,
-    PresetSectionState, PresetSelection, TitleSectionIds, TitleSectionState,
+    BackgroundSectionState, FlagSectionState, IconSysState, LightingSectionState,
+    PresetPreviewData, PresetSectionState, PresetSelection, TitleSectionIds, TitleSectionState,
 };
-use psu_packer::{ColorConfig, ColorFConfig, IconSysPreset, VectorConfig};
 
 pub(crate) fn icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
     ui.heading(theme::display_heading_text(ui, "icon.sys metadata"));
@@ -101,8 +100,8 @@ pub(crate) fn icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
             flag_selector(
                 ui,
                 FlagSectionState {
-                    selection: &mut app.icon_sys_flag_selection,
-                    custom_flag: &mut app.icon_sys_custom_flag,
+                    selection: &mut app.icon_sys_state.flag_selection,
+                    custom_flag: &mut app.icon_sys_state.custom_flag,
                 },
             )
         });
@@ -112,39 +111,49 @@ pub(crate) fn icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
 
         ui.add_space(12.0);
 
-        let mut selected_preset = app.icon_sys_selected_preset.clone();
-        let preset_response = ui
-            .group(|ui| {
-                ui.heading(theme::display_heading_text(ui, "Presets"));
-                ui.small("Choose a preset to populate the colors and lights automatically.");
-                preset_selector(
-                    ui,
-                    PresetSectionState {
-                        selected_preset: &mut selected_preset,
-                    },
-                    PresetPreviewData {
-                        background_colors: &app.icon_sys_background_colors,
-                        light_colors: &app.icon_sys_light_colors,
-                        ambient_color: &app.icon_sys_ambient_color,
-                    },
-                )
-            })
-            .inner;
-        if let Some(selection) = &preset_response.selection {
-            match selection {
-                PresetSelection::Manual => {
-                    inner_changed = true;
-                }
-                PresetSelection::Preset(preset) => {
-                    apply_preset(app, preset);
-                    inner_changed = true;
+        let mut selected_preset = app.icon_sys_state.selected_preset.clone();
+        let mut pending_selected: Option<Option<String>> = None;
+        {
+            let preset_preview = PresetPreviewData {
+                background_colors: &app.icon_sys_state.background_colors,
+                light_colors: &app.icon_sys_state.light_colors,
+                ambient_color: &app.icon_sys_state.ambient_color,
+            };
+            let preset_response = ui
+                .group(|ui| {
+                    ui.heading(theme::display_heading_text(ui, "Presets"));
+                    ui.small("Choose a preset to populate the colors and lights automatically.");
+                    preset_selector(
+                        ui,
+                        PresetSectionState {
+                            selected_preset: &mut selected_preset,
+                        },
+                        preset_preview,
+                    )
+                })
+                .inner;
+            if let Some(selection) = &preset_response.selection {
+                match selection {
+                    PresetSelection::Manual => {
+                        app.icon_sys_state.clear_preset();
+                        pending_selected = Some(None);
+                        inner_changed = true;
+                    }
+                    PresetSelection::Preset(preset) => {
+                        app.icon_sys_state.apply_preset(preset);
+                        pending_selected = Some(app.icon_sys_state.selected_preset.clone());
+                        inner_changed = true;
+                    }
                 }
             }
+            if preset_response.changed {
+                inner_changed = true;
+            }
         }
-        if preset_response.changed {
-            inner_changed = true;
+        if let Some(value) = pending_selected {
+            selected_preset = value;
         }
-        app.icon_sys_selected_preset = selected_preset.clone();
+        app.icon_sys_state.selected_preset = selected_preset;
 
         ui.add_space(12.0);
 
@@ -154,8 +163,8 @@ pub(crate) fn icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
             background_editor(
                 ui,
                 BackgroundSectionState {
-                    transparency: &mut app.icon_sys_background_transparency,
-                    colors: &mut app.icon_sys_background_colors,
+                    transparency: &mut app.icon_sys_state.background_transparency,
+                    colors: &mut app.icon_sys_state.background_colors,
                 },
             )
         });
@@ -172,9 +181,9 @@ pub(crate) fn icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
             lighting_editor(
                 ui,
                 LightingSectionState {
-                    light_colors: &mut app.icon_sys_light_colors,
-                    light_directions: &mut app.icon_sys_light_directions,
-                    ambient_color: &mut app.icon_sys_ambient_color,
+                    light_colors: &mut app.icon_sys_state.light_colors,
+                    light_directions: &mut app.icon_sys_state.light_directions,
+                    ambient_color: &mut app.icon_sys_state.ambient_color,
                 },
             )
         });
@@ -199,34 +208,15 @@ pub fn render_icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
     icon_sys_editor(app, ui);
 }
 
-fn apply_preset(app: &mut PackerApp, preset: &IconSysPreset) {
-    app.icon_sys_background_transparency = preset.background_transparency;
-    app.icon_sys_background_colors = preset.background_colors;
-    app.icon_sys_light_directions = preset.light_directions;
-    app.icon_sys_light_colors = preset.light_colors;
-    app.icon_sys_ambient_color = preset.ambient_color;
-    app.icon_sys_selected_preset = Some(preset.id.to_string());
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct IconSysSnapshot {
     pub enabled: bool,
-    pub background_transparency: u32,
-    pub background_colors: [ColorConfig; 4],
-    pub light_directions: [VectorConfig; 3],
-    pub light_colors: [ColorFConfig; 3],
-    pub ambient_color: ColorFConfig,
-    pub selected_preset: Option<String>,
+    pub state: IconSysState,
 }
 
 pub fn icon_sys_snapshot(app: &PackerApp) -> IconSysSnapshot {
     IconSysSnapshot {
         enabled: app.icon_sys_enabled,
-        background_transparency: app.icon_sys_background_transparency,
-        background_colors: app.icon_sys_background_colors,
-        light_directions: app.icon_sys_light_directions,
-        light_colors: app.icon_sys_light_colors,
-        ambient_color: app.icon_sys_ambient_color,
-        selected_preset: app.icon_sys_selected_preset.clone(),
+        state: app.icon_sys_state.clone(),
     }
 }

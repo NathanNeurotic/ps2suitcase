@@ -199,10 +199,7 @@ impl FileTree {
                     let file_type = match entry.file_type() {
                         Ok(file_type) => file_type,
                         Err(err) => {
-                            eprintln!(
-                                "Failed to read metadata for '{}': {err}",
-                                path.display()
-                            );
+                            eprintln!("Failed to read metadata for '{}': {err}", path.display());
                             continue;
                         }
                     };
