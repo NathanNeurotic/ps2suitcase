@@ -106,6 +106,28 @@ impl Config {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct FileTimes {
+    pub created: Option<SystemTime>,
+    pub modified: SystemTime,
+}
+
+pub trait MetadataReader {
+    fn file_times(&self, path: &Path) -> std::io::Result<FileTimes>;
+}
+
+#[derive(Default)]
+pub struct FsMetadataReader;
+
+impl MetadataReader for FsMetadataReader {
+    fn file_times(&self, path: &Path) -> std::io::Result<FileTimes> {
+        let metadata = std::fs::metadata(path)?;
+        let modified = metadata.modified()?;
+        let created = metadata.created().ok();
+        Ok(FileTimes { created, modified })
+    }
+}
+
 pub fn load_config(folder: &Path) -> Result<Config, Error> {
     let config_file = folder.join("psu.toml");
     let str = std::fs::read_to_string(&config_file)?;
@@ -120,6 +142,16 @@ pub fn pack_psu(folder: &Path, output: &Path) -> Result<(), Error> {
 }
 
 pub fn pack_with_config(folder: &Path, output: &Path, cfg: Config) -> Result<(), Error> {
+    let metadata_reader = FsMetadataReader::default();
+    pack_with_config_and_metadata_reader(folder, output, cfg, &metadata_reader)
+}
+
+pub fn pack_with_config_and_metadata_reader<M: MetadataReader>(
+    folder: &Path,
+    output: &Path,
+    cfg: Config,
+    metadata_reader: &M,
+) -> Result<(), Error> {
     let Config {
         name,
         timestamp,
@@ -227,7 +259,7 @@ pub fn pack_with_config(folder: &Path, output: &Path, cfg: Config) -> Result<(),
 
     let timestamp_value = timestamp.unwrap_or_default();
     add_psu_defaults(&mut psu, &name, files.len(), timestamp_value);
-    add_files_to_psu(&mut psu, &files, timestamp)?;
+    add_files_to_psu(&mut psu, &files, timestamp, metadata_reader)?;
     std::fs::write(output, PSUWriter::new(psu).to_bytes()?)?;
     Ok(())
 }
@@ -298,10 +330,11 @@ fn add_psu_defaults(psu: &mut PSU, name: &str, file_count: usize, timestamp: Nai
     });
 }
 
-fn add_files_to_psu(
+fn add_files_to_psu<M: MetadataReader>(
     psu: &mut PSU,
     files: &[PathBuf],
     timestamp: Option<NaiveDateTime>,
+    metadata_reader: &M,
 ) -> Result<(), Error> {
     for file in files {
         let name = file.file_name().unwrap().to_str().unwrap();
@@ -310,11 +343,13 @@ fn add_files_to_psu(
         let (created, modified) = if let Some(timestamp) = timestamp {
             (timestamp, timestamp)
         } else {
-            let stat = std::fs::metadata(file)?;
-            (
-                convert_timestamp(stat.created()?),
-                convert_timestamp(stat.modified()?),
-            )
+            let file_times = metadata_reader.file_times(file)?;
+            let modified = convert_timestamp(file_times.modified);
+            let created = file_times
+                .created
+                .map(convert_timestamp)
+                .unwrap_or(modified);
+            (created, modified)
         };
 
         println!("+ {} {}", "Adding", name.green());
