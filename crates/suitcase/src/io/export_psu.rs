@@ -1,85 +1,76 @@
-use ps2_filetypes::chrono::{DateTime, Utc};
-use ps2_filetypes::{PSUEntry, PSUEntryKind, PSUWriter, DIR_ID, FILE_ID, PSU};
-use std::fs::File;
-use std::io::Write;
 use crate::AppState;
+use psu_packer::{self, Config as PsuConfig};
+use std::path::PathBuf;
 
-pub fn export_psu(state: &mut AppState) -> std::io::Result<()> {
-    let folder_name = state
+#[derive(Debug)]
+pub enum ExportError {
+    NoFolderSelected,
+    PackError {
+        folder: PathBuf,
+        output: PathBuf,
+        source: psu_packer::Error,
+    },
+}
+
+pub fn export_psu(state: &AppState) -> Result<(), ExportError> {
+    let folder = state
         .opened_folder
         .clone()
-        .unwrap()
+        .ok_or(ExportError::NoFolderSelected)?;
+
+    let folder_name = folder
         .file_name()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_owned();
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| folder.to_string_lossy().into_owned());
 
-    let target_filename = folder_name.to_owned() + ".psu";
+    let config = config_from_state(state, folder_name.clone());
+    let default_name = format!("{folder_name}.psu");
 
-    if let Some(filename) = rfd::FileDialog::new()
-        .set_file_name(target_filename)
+    if let Some(mut output_path) = rfd::FileDialog::new()
+        .set_file_name(&default_name)
+        .set_directory(&folder)
         .save_file()
     {
-        let mut psu = PSU::default();
+        enforce_psu_extension(&mut output_path);
 
-        let root = PSUEntry {
-            id: DIR_ID,
-            size: state.files.len() as u32 + 2,
-            created: Utc::now().naive_utc(),
-            sector: 0,
-            modified: Utc::now().naive_utc(),
-            name: folder_name,
-            kind: PSUEntryKind::Directory,
-            contents: None,
-        };
-        let cur = PSUEntry {
-            id: FILE_ID,
-            size: 0,
-            created: Utc::now().naive_utc(),
-            sector: 0,
-            modified: Utc::now().naive_utc(),
-            name: ".".to_string(),
-            kind: PSUEntryKind::Directory,
-            contents: None,
-        };
-        let parent = PSUEntry {
-            id: FILE_ID,
-            size: 0,
-            created: Utc::now().naive_utc(),
-            sector: 0,
-            modified: Utc::now().naive_utc(),
-            name: "..".to_string(),
-            kind: PSUEntryKind::Directory,
-            contents: None,
-        };
-
-        psu.entries.push(root);
-        psu.entries.push(cur);
-        psu.entries.push(parent);
-
-        for file in state.files.iter() {
-            let metadata = file.file_path.metadata()?;
-            let contents = std::fs::read(&file.file_path)?;
-            let size = contents.len() as u32;
-
-            let created_at: DateTime<Utc> = metadata.modified()?.into();
-            let modified_at: DateTime<Utc> = metadata.modified()?.into();
-
-            psu.entries.push(PSUEntry {
-                id: FILE_ID,
-                size,
-                sector: 0,
-                contents: Some(contents),
-                name: file.name.clone(),
-                created: created_at.naive_local(),
-                modified: modified_at.naive_local(),
-                kind: PSUEntryKind::File,
-            });
-        }
-        let data = PSUWriter::new(psu).to_bytes()?;
-        File::create(&filename)?.write_all(&data)?;
+        psu_packer::pack_with_config(&folder, &output_path, config).map_err(|source| {
+            ExportError::PackError {
+                folder: folder.clone(),
+                output: output_path.clone(),
+                source,
+            }
+        })?;
     }
 
     Ok(())
+}
+
+fn config_from_state(state: &AppState, name: String) -> PsuConfig {
+    let include = Some(
+        state
+            .files
+            .iter()
+            .map(|file| file.name.clone())
+            .collect::<Vec<_>>(),
+    );
+
+    PsuConfig {
+        name,
+        timestamp: None,
+        include,
+        exclude: None,
+        icon_sys: None,
+    }
+}
+
+fn enforce_psu_extension(path: &mut PathBuf) {
+    let has_psu_extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("psu"))
+        .unwrap_or(false);
+
+    if !has_psu_extension {
+        path.set_extension("psu");
+    }
 }
