@@ -19,10 +19,26 @@ impl FilePicker for Ui {
 
             let width = ui.available_width();
 
-            set_border_radius(ui, CornerRadius{nw: 2, sw: 2, ne: 0, se: 0});
+            set_border_radius(
+                ui,
+                CornerRadius {
+                    nw: 2,
+                    sw: 2,
+                    ne: 0,
+                    se: 0,
+                },
+            );
             let response = ui.add(TextEdit::singleline(value).desired_width(width - 26.0));
 
-            set_border_radius(ui, CornerRadius{nw: 0, sw: 0, ne: 2, se: 2});
+            set_border_radius(
+                ui,
+                CornerRadius {
+                    nw: 0,
+                    sw: 0,
+                    ne: 2,
+                    se: 2,
+                },
+            );
             if ui.button("🗁").clicked() {
                 if let Some(file) = ui.ctx().open_file(filters) {
                     *value = file.to_str().unwrap_or_default().to_string();
@@ -30,6 +46,7 @@ impl FilePicker for Ui {
             }
 
             response
-        }).inner
+        })
+        .inner
     }
 }

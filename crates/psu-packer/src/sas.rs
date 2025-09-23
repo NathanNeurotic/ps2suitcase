@@ -39,6 +39,14 @@ fn canonical_category_aliases() -> &'static [SharedCategory] {
     &shared_sas_data().categories
 }
 
+pub fn canonical_aliases_for_category(key: &str) -> Vec<String> {
+    canonical_category_aliases()
+        .iter()
+        .find(|group| group.key == key)
+        .map(|group| group.aliases.clone())
+        .unwrap_or_default()
+}
+
 fn is_supported_alias(key: &str, alias: &str) -> bool {
     canonical_category_aliases()
         .iter()

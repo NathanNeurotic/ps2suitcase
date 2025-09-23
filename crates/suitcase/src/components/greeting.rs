@@ -1,6 +1,6 @@
-use eframe::egui::Ui;
 use crate::components::menu_bar::OPEN_FOLDER_KEYBOARD_SHORTCUT;
 use crate::data::state::AppState;
+use eframe::egui::Ui;
 
 pub fn greeting(ui: &mut Ui, app: &mut AppState) {
     let is_folder_open = app.opened_folder.is_some();

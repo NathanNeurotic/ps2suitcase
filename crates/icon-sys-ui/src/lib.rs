@@ -5,6 +5,9 @@ use psu_packer::{
     VectorConfig, ICON_SYS_FLAG_OPTIONS, ICON_SYS_PRESETS, ICON_SYS_TITLE_CHAR_LIMIT,
 };
 
+pub mod state;
+pub use state::IconSysState;
+
 const TITLE_INPUT_WIDTH: f32 = (ICON_SYS_TITLE_CHAR_LIMIT as f32) * 9.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -465,9 +468,9 @@ mod tests {
         ctx.begin_frame(egui::RawInput::default());
         egui::CentralPanel::default().show(&ctx, |ui| {
             let mut selected = None;
-            let mut background = psu_packer::IconSysConfig::default_background_colors();
-            let mut lights = psu_packer::IconSysConfig::default_light_colors();
-            let mut ambient = psu_packer::IconSysConfig::default_ambient_color();
+            let background = psu_packer::IconSysConfig::default_background_colors();
+            let lights = psu_packer::IconSysConfig::default_light_colors();
+            let ambient = psu_packer::IconSysConfig::default_ambient_color();
             let response = preset_selector(
                 ui,
                 PresetSectionState {

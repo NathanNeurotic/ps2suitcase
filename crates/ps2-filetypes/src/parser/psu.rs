@@ -1,8 +1,8 @@
 use std::io::{Cursor, Read, Seek};
 
-use byteorder::{ReadBytesExt, LE};
-use crate::{PSUEntry, PSUEntryKind, PSUParser, DIR_ID, FILE_ID, PAGE_SIZE, PSU};
 use crate::util::parse_cstring;
+use crate::{PSUEntry, PSUEntryKind, PSUParser, DIR_ID, FILE_ID, PAGE_SIZE, PSU};
+use byteorder::{ReadBytesExt, LE};
 
 impl PSU {
     pub fn entries(&self) -> Vec<PSUEntry> {

@@ -5,7 +5,6 @@ pub const FILE_ID: u16 = 0x8497;
 
 pub const PAGE_SIZE: u32 = 0x400;
 
-
 #[derive(Default)]
 pub struct PSU {
     pub entries: Vec<PSUEntry>,

@@ -1,22 +1,14 @@
 use crate::wizards::wizard::Wizard;
 use eframe::egui::{Context, Response, Ui, Widget};
+use ps2_filetypes::color::Color;
 use ps2_filetypes::{
-    AnimationHeader,
-    AnimationShape,
-    ICNHeader,
-    IcnTexture,
-    Normal,
-    Vertex,
-    ICN,
-    UV,
-    BinWriter,
-    ICNWriter,
+    AnimationHeader, AnimationShape, BinWriter, ICNHeader, ICNWriter, IcnTexture, Normal, Vertex,
+    ICN, UV,
 };
 use std::fs::File;
 use std::hash::Hash;
 use std::io::{Read, Write};
 use wavefront_obj::obj::Primitive::Triangle;
-use ps2_filetypes::color::Color;
 
 pub fn create_icn_wizard(ctx: &Context, show: &mut bool) {
     CreateICN {}.show_modal(ctx, show);
@@ -31,7 +23,8 @@ impl Widget for &mut CreateICN {
                 let mut data = vec![];
                 file.read_to_end(&mut data).unwrap();
 
-                let obj = wavefront_obj::obj::parse(String::from_utf8(data).unwrap()).expect("Teapot");
+                let obj =
+                    wavefront_obj::obj::parse(String::from_utf8(data).unwrap()).expect("Teapot");
                 assert_eq!(obj.objects.len(), 1);
 
                 let mut vertices: AnimationShape = vec![];
@@ -42,14 +35,31 @@ impl Widget for &mut CreateICN {
                 let obj = &obj.objects[0];
                 for geom in obj.geometry.iter() {
                     for shape in geom.shapes.iter() {
-                        if let Triangle((x, _xt, _xn), (y, _yt, _yn), (z, _zt, _zn)) = shape.primitive {
+                        if let Triangle((x, _xt, _xn), (y, _yt, _yn), (z, _zt, _zn)) =
+                            shape.primitive
+                        {
                             let va = obj.vertices[x];
                             let vb = obj.vertices[y];
                             let vc = obj.vertices[z];
 
-                            vertices.push(Vertex::new((va.x * 4096.0) as i16, -(va.y * 4096.0) as i16, -(va.z * 4096.0) as i16, 0));
-                            vertices.push(Vertex::new((vb.x * 4096.0) as i16, -(vb.y * 4096.0) as i16, -(vb.z * 4096.0) as i16, 0));
-                            vertices.push(Vertex::new((vc.x * 4096.0) as i16, -(vc.y * 4096.0) as i16, -(vc.z * 4096.0) as i16, 0));
+                            vertices.push(Vertex::new(
+                                (va.x * 4096.0) as i16,
+                                -(va.y * 4096.0) as i16,
+                                -(va.z * 4096.0) as i16,
+                                0,
+                            ));
+                            vertices.push(Vertex::new(
+                                (vb.x * 4096.0) as i16,
+                                -(vb.y * 4096.0) as i16,
+                                -(vb.z * 4096.0) as i16,
+                                0,
+                            ));
+                            vertices.push(Vertex::new(
+                                (vc.x * 4096.0) as i16,
+                                -(vc.y * 4096.0) as i16,
+                                -(vc.z * 4096.0) as i16,
+                                0,
+                            ));
 
                             for _ in 0..3 {
                                 normals.push(Normal::new(0, 0, 0, 0));
@@ -66,13 +76,13 @@ impl Widget for &mut CreateICN {
                         vertex_count: vertices.len() as u32,
                         texture_type: 0x07,
                     },
-                    animation_shapes: vec![
-                        vertices
-                    ],
+                    animation_shapes: vec![vertices],
                     normals,
                     uvs,
                     colors,
-                    texture: IcnTexture { pixels: [0xFFFF; 16384] },
+                    texture: IcnTexture {
+                        pixels: [0xFFFF; 16384],
+                    },
                     animation_header: AnimationHeader {
                         tag: 0,
                         frame_length: 0,

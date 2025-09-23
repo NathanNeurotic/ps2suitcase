@@ -6,4 +6,5 @@ version.workspace = true
 
 [dependencies]
 egui = "0.31.1"
+ps2-filetypes = { path = "../ps2-filetypes" }
 psu-packer = { path = "../psu-packer" }

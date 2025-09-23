@@ -843,12 +843,12 @@ impl PackerApp {
                 flags: psu_packer::IconSysFlags::new(flag_value),
                 title: combined_title,
                 linebreak_pos: Some(linebreak_pos),
-                preset: self.icon_sys_selected_preset.clone(),
-                background_transparency: Some(self.icon_sys_background_transparency),
-                background_colors: Some(self.icon_sys_background_colors.to_vec()),
-                light_directions: Some(self.icon_sys_light_directions.to_vec()),
-                light_colors: Some(self.icon_sys_light_colors.to_vec()),
-                ambient_color: Some(self.icon_sys_ambient_color),
+                preset: self.icon_sys_state.selected_preset.clone(),
+                background_transparency: Some(self.icon_sys_state.background_transparency),
+                background_colors: Some(self.icon_sys_state.background_colors.to_vec()),
+                light_directions: Some(self.icon_sys_state.light_directions.to_vec()),
+                light_colors: Some(self.icon_sys_state.light_colors.to_vec()),
+                ambient_color: Some(self.icon_sys_state.ambient_color),
             })
         } else {
             None

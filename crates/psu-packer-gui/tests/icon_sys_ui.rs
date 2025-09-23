@@ -24,11 +24,17 @@ fn icon_sys_editor_renders_default_state() {
     let default_preset = &ICON_SYS_PRESETS[0];
     let snapshot = icon_sys_snapshot(&app);
     assert_eq!(
-        snapshot.background_transparency,
+        snapshot.state.background_transparency,
         default_preset.background_transparency
     );
-    assert_eq!(snapshot.background_colors, default_preset.background_colors);
-    assert_eq!(snapshot.light_directions, default_preset.light_directions);
-    assert_eq!(snapshot.light_colors, default_preset.light_colors);
-    assert_eq!(snapshot.ambient_color, default_preset.ambient_color);
+    assert_eq!(
+        snapshot.state.background_colors,
+        default_preset.background_colors
+    );
+    assert_eq!(
+        snapshot.state.light_directions,
+        default_preset.light_directions
+    );
+    assert_eq!(snapshot.state.light_colors, default_preset.light_colors);
+    assert_eq!(snapshot.state.ambient_color, default_preset.ambient_color);
 }

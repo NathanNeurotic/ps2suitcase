@@ -1,8 +1,8 @@
-use std::io::{Cursor, Read, Result};
 use crate::color::Color;
 use crate::sjis::{decode_sjis, encode_sjis};
 use crate::util::parse_cstring;
 use byteorder::{ReadBytesExt, LE};
+use std::io::{Cursor, Read, Result};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ColorF {
@@ -224,7 +224,11 @@ fn parse_color(c: &mut Cursor<Vec<u8>>) -> Result<Color> {
             Ok(raw_int as u8)
         } else {
             let raw = f32::from_le_bytes(buf);
-            let normalized = if raw.is_nan() { 0.0 } else { raw.clamp(0.0, 1.0) };
+            let normalized = if raw.is_nan() {
+                0.0
+            } else {
+                raw.clamp(0.0, 1.0)
+            };
             Ok((normalized * 255.0).round() as u8)
         }
     }

@@ -11,10 +11,10 @@ impl Timeline {
 
     pub fn evaluate(&self, t: f32) -> f32 {
         if t <= self.keys[0].time {
-            return self.keys[0].value
+            return self.keys[0].value;
         }
         if t >= self.keys[self.keys.len() - 1].time {
-            return self.keys[self.keys.len() - 1].value
+            return self.keys[self.keys.len() - 1].value;
         }
 
         for i in 1..self.keys.len() {

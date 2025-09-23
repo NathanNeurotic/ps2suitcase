@@ -24,14 +24,20 @@ fn pack_psu_consumes_repository_fixture() {
 
     let archive = PSU::new(fs::read(&output).expect("read packed archive"));
 
-    assert!(archive.entries.iter().any(|entry| {
-        matches!(entry.kind, PSUEntryKind::File) && entry.name.eq_ignore_ascii_case("DATA.BIN")
-    }), "expected DATA.BIN to be included");
+    assert!(
+        archive.entries.iter().any(|entry| {
+            matches!(entry.kind, PSUEntryKind::File) && entry.name.eq_ignore_ascii_case("DATA.BIN")
+        }),
+        "expected DATA.BIN to be included"
+    );
 
-    assert!(archive.entries.iter().all(|entry| {
-        !matches!(entry.kind, PSUEntryKind::File)
-            || !entry.name.eq_ignore_ascii_case("psu.toml")
-    }), "psu.toml should not be packaged");
+    assert!(
+        archive.entries.iter().all(|entry| {
+            !matches!(entry.kind, PSUEntryKind::File)
+                || !entry.name.eq_ignore_ascii_case("psu.toml")
+        }),
+        "psu.toml should not be packaged"
+    );
 
     let expected_timestamp = NaiveDate::from_ymd_opt(2024, 10, 10)
         .unwrap()
@@ -42,9 +48,7 @@ fn pack_psu_consumes_repository_fixture() {
         .entries
         .iter()
         .find(|entry| {
-            matches!(entry.kind, PSUEntryKind::Directory)
-                && entry.name != "."
-                && entry.name != ".."
+            matches!(entry.kind, PSUEntryKind::Directory) && entry.name != "." && entry.name != ".."
         })
         .expect("root directory entry present");
 
