@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod icon_sys;
+pub mod sas;
 
 pub use icon_sys::{
     color_config_to_rgba, color_f_config_to_rgba, color_f_to_rgba, color_to_normalized_rgba,
