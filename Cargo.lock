@@ -3202,16 +3202,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ps2-psupacker"
-version = "0.1.0"
-dependencies = [
- "byteorder",
- "chrono",
- "eframe",
- "rfd 0.15.3",
-]
-
-[[package]]
 name = "psu-packer"
 version = "0.1.0"
 dependencies = [
