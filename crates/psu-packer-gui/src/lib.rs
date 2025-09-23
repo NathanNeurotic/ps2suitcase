@@ -9,6 +9,7 @@ use std::{
 use crate::ui::theme;
 use chrono::NaiveDateTime;
 use eframe::egui::{self, Widget};
+use icon_sys_ui::IconFlagSelection;
 use indexmap::IndexMap;
 use ps2_filetypes::{templates, IconSys, PSUEntryKind, TitleCfg, PSU};
 use psu_packer::{
@@ -207,12 +208,6 @@ impl SasPrefix {
         }
         (SasPrefix::None, name)
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum IconFlagSelection {
-    Preset(usize),
-    Custom,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1287,26 +1282,11 @@ impl PackerApp {
         }
     }
 
-    pub(crate) fn icon_flag_label(&self) -> String {
-        match self.icon_sys_flag_selection {
-            IconFlagSelection::Preset(index) => ICON_SYS_FLAG_OPTIONS
-                .get(index)
-                .map(|(_, label)| (*label).to_string())
-                .unwrap_or_else(|| format!("Preset {index}")),
-            IconFlagSelection::Custom => {
-                format!("Custom (0x{:04X})", self.icon_sys_custom_flag)
-            }
-        }
-    }
-
     pub(crate) fn selected_icon_flag_value(&self) -> Result<u16, String> {
-        match self.icon_sys_flag_selection {
-            IconFlagSelection::Preset(index) => ICON_SYS_FLAG_OPTIONS
-                .get(index)
-                .map(|(value, _)| *value)
-                .ok_or_else(|| "Invalid icon.sys flag selection".to_string()),
-            IconFlagSelection::Custom => Ok(self.icon_sys_custom_flag),
-        }
+        icon_sys_ui::selected_icon_flag_value(
+            self.icon_sys_flag_selection,
+            self.icon_sys_custom_flag,
+        )
     }
 
     pub(crate) fn missing_include_files(&self, folder: &Path) -> Vec<String> {

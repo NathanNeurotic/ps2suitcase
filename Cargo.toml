@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/icon-sys-ui",
     "crates/suitcase",
     "crates/ps2-filetypes",
     "crates/xtask-build-app",

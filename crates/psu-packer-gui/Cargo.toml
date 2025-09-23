@@ -10,6 +10,7 @@ default = []
 psu-toml-editor = []
 
 [dependencies]
+icon-sys-ui = { path = "../icon-sys-ui" }
 psu-packer = { path = "../psu-packer" }
 ps2-filetypes = { path = "../ps2-filetypes" }
 eframe = { version = "0.31.1", features = ["default", "wgpu"] }
