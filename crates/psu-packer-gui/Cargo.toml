@@ -13,6 +13,7 @@ psu-toml-editor = []
 icon-sys-ui = { path = "../icon-sys-ui" }
 psu-packer = { path = "../psu-packer" }
 ps2-filetypes = { path = "../ps2-filetypes" }
+gui-core = { path = "../gui-core" }
 eframe = { version = "0.31.1", features = ["default", "wgpu"] }
 rfd = "0.14"
 chrono = "0.4.42"

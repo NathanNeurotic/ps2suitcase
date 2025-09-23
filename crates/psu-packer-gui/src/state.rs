@@ -14,6 +14,7 @@ use crate::{
 };
 use chrono::NaiveDateTime;
 use eframe::egui::{self, Widget};
+use gui_core::actions::{Action, ActionDispatcher, MetadataTarget};
 use icon_sys_ui::IconSysState;
 use indexmap::IndexMap;
 use ps2_filetypes::{templates, IconSys, PSUEntryKind, TitleCfg, PSU};
@@ -1986,6 +1987,67 @@ impl PackerApp {
     #[cfg(test)]
     pub(crate) fn pack_job_active(&self) -> bool {
         self.pack_job.is_some()
+    }
+}
+
+impl ActionDispatcher for PackerApp {
+    fn is_action_enabled(&self, action: Action) -> bool {
+        match action {
+            Action::PackPsu => !self.is_pack_running(),
+            #[cfg(feature = "psu-toml-editor")]
+            Action::EditMetadata(MetadataTarget::PsuToml)
+            | Action::CreateMetadataTemplate(MetadataTarget::PsuToml) => true,
+            #[cfg(not(feature = "psu-toml-editor"))]
+            Action::EditMetadata(MetadataTarget::PsuToml)
+            | Action::CreateMetadataTemplate(MetadataTarget::PsuToml) => false,
+            _ => true,
+        }
+    }
+
+    fn trigger_action(&mut self, action: Action) {
+        match action {
+            Action::OpenProject => self.handle_open_psu(),
+            Action::PackPsu => {
+                if !self.is_pack_running() {
+                    self.handle_pack_request();
+                }
+            }
+            Action::ChooseOutputDestination => {
+                self.browse_output_destination();
+            }
+            Action::EditMetadata(MetadataTarget::TitleCfg) => {
+                self.open_title_cfg_tab();
+            }
+            Action::EditMetadata(MetadataTarget::IconSys) => {
+                self.open_icon_sys_tab();
+            }
+            Action::CreateMetadataTemplate(MetadataTarget::TitleCfg) => {
+                self.create_title_cfg_from_template();
+            }
+            #[cfg(feature = "psu-toml-editor")]
+            Action::EditMetadata(MetadataTarget::PsuToml) => {
+                self.open_psu_toml_tab();
+            }
+            #[cfg(feature = "psu-toml-editor")]
+            Action::CreateMetadataTemplate(MetadataTarget::PsuToml) => {
+                self.create_psu_toml_from_template();
+            }
+            _ => {}
+        }
+    }
+
+    fn supports_action(&self, action: Action) -> bool {
+        match action {
+            Action::EditMetadata(MetadataTarget::PsuToml)
+            | Action::CreateMetadataTemplate(MetadataTarget::PsuToml) => {
+                cfg!(feature = "psu-toml-editor")
+            }
+            Action::AddFiles
+            | Action::SaveFile
+            | Action::OpenSettings
+            | Action::CreateMetadataTemplate(MetadataTarget::IconSys) => false,
+            _ => true,
+        }
     }
 }
 

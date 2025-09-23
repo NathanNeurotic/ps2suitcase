@@ -4,6 +4,7 @@ use std::{
 };
 
 use eframe::egui;
+use gui_core::actions::{self, Action, ActionDescriptor, MetadataTarget};
 use ps2_filetypes::{IconSys, PSUEntryKind, PSU};
 
 use crate::{
@@ -22,81 +23,71 @@ fn file_menu_contents(
     ui: &mut egui::Ui,
     mut recorder: Option<&mut dyn FileMenuRecorder>,
 ) {
-    let pack_in_progress = app.is_pack_running();
-
-    let pack_psu_response = ui
-        .add_enabled(!pack_in_progress, egui::Button::new("Pack PSU"))
+    let pack_descriptor = ActionDescriptor::new(Action::PackPsu, "Pack PSU");
+    let pack_psu_response = actions::action_button(ui, app, &pack_descriptor)
         .on_hover_text("Create the PSU archive using the settings above.");
     if let Some(recorder) = recorder.as_mut() {
         recorder.record(FileMenuItem::PackPsu, pack_psu_response.enabled());
     }
-    if pack_psu_response.clicked() {
-        app.handle_pack_request();
-        ui.close_menu();
-    }
 
-    if ui.button("Save PSU As...").clicked() {
-        app.browse_output_destination();
-        ui.close_menu();
-    }
+    let save_descriptor = ActionDescriptor::new(Action::ChooseOutputDestination, "Save PSU As...");
+    actions::action_button(ui, app, &save_descriptor);
 
-    if ui.button("Open PSU...").clicked() {
-        app.handle_open_psu();
-        ui.close_menu();
-    }
+    let open_descriptor = ActionDescriptor::new(Action::OpenProject, "Open PSU...");
+    actions::action_button(ui, app, &open_descriptor);
 
     #[cfg(feature = "psu-toml-editor")]
     {
-        let edit_psu_response = ui.button("Edit psu.toml");
+        let edit_psu_descriptor = ActionDescriptor::new(
+            Action::EditMetadata(MetadataTarget::PsuToml),
+            "Edit psu.toml",
+        );
+        let edit_psu_response = actions::action_button(ui, app, &edit_psu_descriptor);
         if let Some(recorder) = recorder.as_mut() {
             recorder.record(FileMenuItem::EditPsuToml, edit_psu_response.enabled());
         }
-        if edit_psu_response.clicked() {
-            app.open_psu_toml_tab();
-            ui.close_menu();
-        }
     }
 
-    let edit_title_response = ui.button("Edit title.cfg");
+    let edit_title_descriptor = ActionDescriptor::new(
+        Action::EditMetadata(MetadataTarget::TitleCfg),
+        "Edit title.cfg",
+    );
+    let edit_title_response = actions::action_button(ui, app, &edit_title_descriptor);
     if let Some(recorder) = recorder.as_mut() {
         recorder.record(FileMenuItem::EditTitleCfg, edit_title_response.enabled());
     }
-    if edit_title_response.clicked() {
-        app.open_title_cfg_tab();
-        ui.close_menu();
-    }
 
-    let edit_icon_response = ui.button("Edit icon.sys");
+    let edit_icon_descriptor = ActionDescriptor::new(
+        Action::EditMetadata(MetadataTarget::IconSys),
+        "Edit icon.sys",
+    );
+    let edit_icon_response = actions::action_button(ui, app, &edit_icon_descriptor);
     if let Some(recorder) = recorder.as_mut() {
         recorder.record(FileMenuItem::EditIconSys, edit_icon_response.enabled());
-    }
-    if edit_icon_response.clicked() {
-        app.open_icon_sys_tab();
-        ui.close_menu();
     }
 
     #[cfg(feature = "psu-toml-editor")]
     {
-        let create_psu_response = ui.button("Create psu.toml from template");
+        let create_psu_descriptor = ActionDescriptor::new(
+            Action::CreateMetadataTemplate(MetadataTarget::PsuToml),
+            "Create psu.toml from template",
+        );
+        let create_psu_response = actions::action_button(ui, app, &create_psu_descriptor);
         if let Some(recorder) = recorder.as_mut() {
             recorder.record(FileMenuItem::CreatePsuToml, create_psu_response.enabled());
         }
-        if create_psu_response.clicked() {
-            app.create_psu_toml_from_template();
-            ui.close_menu();
-        }
     }
 
-    let create_title_response = ui.button("Create title.cfg from template");
+    let create_title_descriptor = ActionDescriptor::new(
+        Action::CreateMetadataTemplate(MetadataTarget::TitleCfg),
+        "Create title.cfg from template",
+    );
+    let create_title_response = actions::action_button(ui, app, &create_title_descriptor);
     if let Some(recorder) = recorder.as_mut() {
         recorder.record(
             FileMenuItem::CreateTitleCfg,
             create_title_response.enabled(),
         );
-    }
-    if create_title_response.clicked() {
-        app.create_title_cfg_from_template();
-        ui.close_menu();
     }
 
     ui.separator();

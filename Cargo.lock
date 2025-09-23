@@ -1753,6 +1753,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gui-core"
+version = "0.1.0"
+dependencies = [
+ "egui",
+]
+
+[[package]]
 name = "half"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3213,6 +3220,7 @@ dependencies = [
  "chrono",
  "eframe",
  "egui_extras",
+ "gui-core",
  "icon-sys-ui",
  "image",
  "indexmap",
@@ -3883,6 +3891,7 @@ dependencies = [
  "eframe",
  "egui_dock",
  "egui_extras",
+ "gui-core",
  "icon-sys-ui",
  "image",
  "notify",
