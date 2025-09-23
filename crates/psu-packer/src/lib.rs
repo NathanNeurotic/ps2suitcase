@@ -209,6 +209,11 @@ pub fn pack_with_config_and_metadata_reader<M: MetadataReader>(
     };
 
     let mut files = filter_files(&raw_included_files);
+    files.sort_by_key(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.to_ascii_lowercase())
+    });
 
     if let Some(exclude) = exclude {
         let mut exclude_set = HashSet::new();
