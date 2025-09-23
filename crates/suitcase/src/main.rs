@@ -22,7 +22,7 @@ use crate::{
     data::files::Files,
     data::state::{AppEvent, AppState},
     data::virtual_file::VirtualFile,
-    io::export_psu::export_psu,
+    io::export_psu::{self, ExportError},
     io::file_watcher::FileWatcher,
     io::read_folder::read_folder,
     tabs::{ICNViewer, IconSysViewer, PsuTomlViewer, TitleCfgViewer},
@@ -291,7 +291,9 @@ impl PSUBuilderApp {
                     self.open_folder();
                 }
                 AppEvent::ExportPSU => {
-                    export_psu(&mut self.state).expect("Failed to export PSU");
+                    if let Err(err) = export_psu::export_psu(&self.state) {
+                        self.report_export_error(err);
+                    }
                 }
                 AppEvent::SaveFile => {
                     self.save_file();
@@ -494,6 +496,32 @@ impl PSUBuilderApp {
         }
     }
 
+    fn report_export_error(&self, err: ExportError) {
+        let message = match err {
+            ExportError::NoFolderSelected => {
+                "Open a folder before exporting a PSU file.".to_string()
+            }
+            ExportError::PackError {
+                folder,
+                output,
+                source,
+            } => format_export_error_message(&folder, &output, source),
+        };
+
+        eprintln!("Failed to export PSU: {message}");
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use rfd::{MessageButtons, MessageDialog};
+
+            MessageDialog::new()
+                .set_title("PS2Suitcase")
+                .set_description(&message)
+                .set_buttons(MessageButtons::Ok)
+                .show();
+        }
+    }
+
     fn create_title_cfg(&mut self) {
         let Some(directory) = self.state.opened_folder.clone() else {
             return;
@@ -549,6 +577,44 @@ impl PSUBuilderApp {
             }
         }
     }
+}
+
+fn format_export_error_message(folder: &Path, output: &Path, err: psu_packer::Error) -> String {
+    use std::io::ErrorKind;
+
+    let detail = match err {
+        psu_packer::Error::NameError => {
+            "PSU name can only contain letters, numbers, spaces, underscores, and hyphens."
+                .to_string()
+        }
+        psu_packer::Error::ConfigError(message) => {
+            format!("Configuration error: {message}")
+        }
+        psu_packer::Error::IOError(io_err) => match io_err.kind() {
+            ErrorKind::NotFound => {
+                if let Some(parent) = output.parent() {
+                    if !parent.exists() {
+                        return format!(
+                            "Cannot write the PSU file because the destination folder {} does not exist.",
+                            parent.display()
+                        );
+                    }
+                }
+                format!("A required file or folder could not be found: {io_err}")
+            }
+            ErrorKind::PermissionDenied => {
+                format!("Permission denied while accessing the file system: {io_err}")
+            }
+            _ => format!("File system error: {io_err}"),
+        },
+    };
+
+    format!(
+        "Failed to export the PSU from '{}' to '{}'.\n{}",
+        folder.display(),
+        output.display(),
+        detail
+    )
 }
 
 impl eframe::App for PSUBuilderApp {
