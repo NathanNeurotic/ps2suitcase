@@ -43,6 +43,7 @@ from datetime import datetime, timezone, timedelta
 # ===== USER CONFIG =======
 # =========================
 # FAT-safe default spacing: 2 seconds (FAT mtime has 2-second granularity)
+# Keep these defaults in sync with `crates/psu-packer/src/sas.rs` (TimestampRules::default).
 DEFAULT_SECONDS_BETWEEN_ITEMS = 2
 
 # Big slot budget so each name gets a unique second within its category, even with many items.
@@ -59,6 +60,7 @@ ENABLE_STABLE_NUDGE = False
 
 # Comma-separated lists of names (no prefixes) to be treated as if they belong to these categories.
 # Edit these to add your own folder names (case-insensitive). Whitespace is ignored.
+# Keep this alias map in sync with `psu_packer::sas::canonical_category_aliases()`.
 UNPREFIXED_IN_CATEGORY_CSV = {
     "APP_":      "OSDXMB, XEBPLUS",
     "APPS":      "",  # exact "APPS" is its own name
