@@ -6,7 +6,10 @@ use std::{
 use eframe::egui;
 use ps2_filetypes::{IconSys, PSUEntryKind, PSU};
 
-use crate::{ui::theme, PackerApp, SasPrefix, TimestampStrategy};
+use crate::{
+    ui::{project_requirements_checklist, theme},
+    PackerApp, SasPrefix, TimestampStrategy, REQUIRED_PROJECT_FILES,
+};
 
 pub(crate) fn file_menu(app: &mut PackerApp, ui: &mut egui::Ui) {
     ui.menu_button("File", |ui| {
@@ -181,7 +184,10 @@ mod tests {
 pub(crate) fn folder_section(app: &mut PackerApp, ui: &mut egui::Ui) {
     ui.group(|ui| {
         ui.heading(theme::display_heading_text(ui, "Folder"));
-        ui.small("Select the PSU project folder containing psu.toml.");
+        ui.small(format!(
+            "Select the PSU project folder containing these assets: {}.",
+            REQUIRED_PROJECT_FILES.join(", ")
+        ));
         ui.horizontal(|ui| {
             let spacing = ui.spacing().item_spacing.x;
             ui.spacing_mut().item_spacing.x = spacing.max(8.0);
@@ -214,11 +220,10 @@ pub(crate) fn folder_section(app: &mut PackerApp, ui: &mut egui::Ui) {
 
         if let Some(folder) = &app.folder {
             ui.label(format!("Folder: {}", folder.display()));
-            if !app.missing_required_project_files.is_empty() {
-                let warning = PackerApp::format_missing_required_files_message(
-                    &app.missing_required_project_files,
-                );
-                ui.colored_label(egui::Color32::YELLOW, warning);
+            if let Some(statuses) = app.project_requirement_statuses() {
+                ui.add_space(4.0);
+                ui.small("Required project asset checklist:");
+                project_requirements_checklist(ui, &statuses);
             }
         }
     });

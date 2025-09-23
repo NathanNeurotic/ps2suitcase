@@ -2,7 +2,10 @@ use std::path::Path;
 
 use eframe::egui;
 
-use crate::{ui::theme, PackerApp, SasPrefix, ICON_SYS_TITLE_CHAR_LIMIT};
+use crate::{
+    ui::{project_requirements_checklist, theme},
+    PackerApp, SasPrefix, ICON_SYS_TITLE_CHAR_LIMIT, REQUIRED_PROJECT_FILES,
+};
 use ps2_filetypes::sjis;
 
 pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
@@ -202,34 +205,108 @@ pub(crate) fn packaging_section(app: &mut PackerApp, ui: &mut egui::Ui) {
         ui.heading(theme::display_heading_text(ui, "Packaging"));
         ui.small("Validate the configuration and generate the PSU archive.");
         let pack_in_progress = app.is_pack_running();
-        if !app.missing_required_project_files.is_empty() {
-            let warning = PackerApp::format_missing_required_files_message(
-                &app.missing_required_project_files,
-            );
-            ui.colored_label(egui::Color32::YELLOW, warning);
+        let missing_requirements = !app.missing_required_project_files.is_empty();
+        let missing_summary = if missing_requirements {
+            Some(
+                app.missing_required_project_files
+                    .iter()
+                    .map(|entry| entry.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )
+        } else {
+            None
+        };
+        let requirement_statuses = app.project_requirement_statuses();
+        let required_asset_list = REQUIRED_PROJECT_FILES.join(", ");
+
+        if let Some(ref statuses) = requirement_statuses {
+            if missing_requirements {
+                let details = missing_summary
+                    .as_ref()
+                    .filter(|summary| !summary.trim().is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| required_asset_list.clone());
+                ui.colored_label(
+                    egui::Color32::YELLOW,
+                    format!("Add the missing project assets before packing: {details}."),
+                );
+            } else {
+                ui.weak(format!(
+                    "All required project assets detected ({required_asset_list})."
+                ));
+            }
+            ui.add_space(4.0);
+            project_requirements_checklist(ui, statuses);
+        } else {
+            ui.weak("Select a project folder to verify the required assets.");
         }
         ui.horizontal_wrapped(|ui| {
-            let pack_button = ui
-                .add_enabled(!pack_in_progress, egui::Button::new("Pack PSU"))
-                .on_hover_text("Create the PSU archive using the settings above.");
+            let pack_button_enabled = !pack_in_progress && !missing_requirements;
+            let mut pack_button =
+                ui.add_enabled(pack_button_enabled, egui::Button::new("Pack PSU"));
+            if pack_in_progress {
+                pack_button = pack_button.on_hover_text("Packing in progress…");
+            } else if missing_requirements {
+                let details = missing_summary
+                    .as_ref()
+                    .filter(|summary| !summary.trim().is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| required_asset_list.clone());
+                pack_button = pack_button.on_hover_text(format!(
+                    "Add the missing project assets before packing: {details}."
+                ));
+            } else {
+                pack_button =
+                    pack_button.on_hover_text("Create the PSU archive using the settings above.");
+            }
 
             if pack_button.clicked() {
                 app.handle_pack_request();
             }
 
-            let update_button = ui
-                .add_enabled(!pack_in_progress, egui::Button::new("Update PSU"))
-                .on_hover_text("Repack the current project into the existing PSU file.");
+            let update_button_enabled = !pack_in_progress && !missing_requirements;
+            let mut update_button =
+                ui.add_enabled(update_button_enabled, egui::Button::new("Update PSU"));
+            if pack_in_progress {
+                update_button = update_button.on_hover_text("Packing in progress…");
+            } else if missing_requirements {
+                let details = missing_summary
+                    .as_ref()
+                    .filter(|summary| !summary.trim().is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| required_asset_list.clone());
+                update_button = update_button.on_hover_text(format!(
+                    "Add the missing project assets before updating: {details}."
+                ));
+            } else {
+                update_button = update_button
+                    .on_hover_text("Repack the current project into the existing PSU file.");
+            }
             if update_button.clicked() {
                 app.handle_update_psu_request();
             }
 
-            let export_button = ui
-                .add_enabled(
-                    !pack_in_progress,
-                    egui::Button::new("Save as Folder with contents"),
-                )
-                .on_hover_text("Export the contents of the current PSU archive to a folder.");
+            let export_button_enabled = !pack_in_progress && !missing_requirements;
+            let mut export_button = ui.add_enabled(
+                export_button_enabled,
+                egui::Button::new("Save as Folder with contents"),
+            );
+            if pack_in_progress {
+                export_button = export_button.on_hover_text("Packing in progress…");
+            } else if missing_requirements {
+                let details = missing_summary
+                    .as_ref()
+                    .filter(|summary| !summary.trim().is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| required_asset_list.clone());
+                export_button = export_button.on_hover_text(format!(
+                    "Add the missing project assets before exporting: {details}."
+                ));
+            } else {
+                export_button = export_button
+                    .on_hover_text("Export the contents of the current PSU archive to a folder.");
+            }
             if export_button.clicked() {
                 app.handle_save_as_folder_with_contents();
             }
