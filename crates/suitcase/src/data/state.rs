@@ -1,5 +1,6 @@
 use crate::data::files::Files;
 use crate::data::virtual_file::VirtualFile;
+use gui_core::actions::{Action, ActionDispatcher, MetadataTarget};
 use std::path::PathBuf;
 
 #[derive(Clone)]
@@ -87,6 +88,46 @@ impl AppState {
             files: Files::default(),
             events: vec![],
             pcsx2_path: String::new(),
+        }
+    }
+}
+
+impl ActionDispatcher for AppState {
+    fn is_action_enabled(&self, action: Action) -> bool {
+        match action {
+            Action::PackPsu
+            | Action::AddFiles
+            | Action::SaveFile
+            | Action::CreateMetadataTemplate(MetadataTarget::PsuToml)
+            | Action::CreateMetadataTemplate(MetadataTarget::TitleCfg)
+            | Action::EditMetadata(_) => self.opened_folder.is_some(),
+            _ => true,
+        }
+    }
+
+    fn trigger_action(&mut self, action: Action) {
+        match action {
+            Action::OpenProject => self.open_folder(),
+            Action::PackPsu => self.export_psu(),
+            Action::AddFiles => self.add_files(),
+            Action::SaveFile => self.save_file(),
+            Action::CreateMetadataTemplate(MetadataTarget::PsuToml) => self.create_psu_toml(),
+            Action::CreateMetadataTemplate(MetadataTarget::TitleCfg) => self.create_title_cfg(),
+            Action::OpenSettings => self.open_settings(),
+            _ => {}
+        }
+    }
+
+    fn supports_action(&self, action: Action) -> bool {
+        match action {
+            Action::OpenProject
+            | Action::PackPsu
+            | Action::AddFiles
+            | Action::SaveFile
+            | Action::CreateMetadataTemplate(MetadataTarget::PsuToml)
+            | Action::CreateMetadataTemplate(MetadataTarget::TitleCfg)
+            | Action::OpenSettings => true,
+            _ => false,
         }
     }
 }

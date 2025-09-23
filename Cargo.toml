@@ -8,6 +8,7 @@ members = [
     "crates/memcard",
     "crates/psu-packer",
     "crates/psu-packer-gui",
+    "crates/gui-core",
 ]
 default-members = ["crates/psu-packer-gui"]
 
