@@ -1014,7 +1014,7 @@ mod packer_app_tests {
     use tempfile::tempdir;
 
     fn wait_for_pack_completion(app: &mut PackerApp) {
-        while app.packer_state.pack_job.is_some() {
+        while app.pack_job_active() {
             thread::sleep(Duration::from_millis(10));
             app.poll_pack_job();
         }
@@ -1143,10 +1143,7 @@ mod packer_app_tests {
             app.test_pack_job_started,
             "pack job should start after acceptance"
         );
-        assert!(
-            app.packer_state.pack_job.is_some(),
-            "pack job handle should be created"
-        );
+        assert!(app.pack_job_active(), "pack job handle should be created");
 
         wait_for_pack_completion(&mut app);
     }
@@ -1171,7 +1168,7 @@ mod packer_app_tests {
 
         app.handle_update_psu_request();
 
-        assert!(app.packer_state.pack_job.is_some(), "pack job should start");
+        assert!(app.pack_job_active(), "pack job should start");
         wait_for_pack_completion(&mut app);
 
         assert!(
@@ -1205,10 +1202,7 @@ mod packer_app_tests {
 
         app.handle_update_psu_request();
 
-        assert!(
-            app.packer_state.pack_job.is_none(),
-            "pack job should not start"
-        );
+        assert!(!app.pack_job_active(), "pack job should not start");
         let message = app
             .packer_state
             .error_message
@@ -1244,7 +1238,7 @@ mod packer_app_tests {
 
         app.handle_update_psu_request();
 
-        assert!(app.packer_state.pack_job.is_some(), "pack job should start");
+        assert!(app.pack_job_active(), "pack job should start");
         assert_ne!(
             app.packer_state.error_message.as_deref(),
             Some("Please select a folder"),
