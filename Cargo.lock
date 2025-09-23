@@ -3192,16 +3192,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ps2-mcm"
-version = "0.1.0"
-dependencies = [
- "eframe",
- "image",
- "ps2-filetypes",
- "rfd 0.15.3",
-]
-
-[[package]]
 name = "psu-packer"
 version = "0.1.0"
 dependencies = [

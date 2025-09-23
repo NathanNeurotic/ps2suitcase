@@ -13,7 +13,7 @@ PS2Suitcase is a Rust toolchain for building, inspecting, and packaging PlayStat
 - **`suitcase` (PS2Suitcase GUI):** Full-featured desktop app with project workspaces, live validation, icon/sys editors, and PSU export workflows.
 - **`psu-packer` (CLI):** Standalone packer that reads `psu.toml`, regenerates `icon.sys` when requested, and writes deterministic `.psu` archives.
 - **`psu-packer-gui`:** Lightweight GUI wrapper around the packer for quick folder selection and metadata edits when the full PS2Suitcase interface is unnecessary.
-- **Libraries:** `ps2-filetypes` (parsers and writers for PSU, ICON, and TITLE files), `memcard` and `ps2-mcm` (memory-card utilities under active refactor), and shared UI macros.
+- **Libraries:** `ps2-filetypes` (parsers and writers for PSU, ICON, and TITLE files) and `memcard` (memory-card utilities under active refactor), plus shared UI macros.
 - **Packaging tooling:** `xtask-build-app` bundles the PS2Suitcase GUI into a macOS `.app` structure with the correct resources.
 
 ## Feature highlights
