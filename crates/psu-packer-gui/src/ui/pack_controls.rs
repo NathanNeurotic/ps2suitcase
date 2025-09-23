@@ -125,14 +125,17 @@ pub(crate) fn file_filters_section(app: &mut PackerApp, ui: &mut egui::Ui) {
             ui.small("No folder selected. Enter file names manually or choose a folder to browse.");
         }
         ui.columns(2, |columns| {
-            let include_actions = file_list_ui(
-                &mut columns[0],
-                ListKind::Include.label(),
-                &mut app.include_files,
-                &mut app.selected_include,
-                &mut app.include_manual_entry,
-                folder_selected,
-            );
+            let include_actions = {
+                let state = &mut app.state;
+                file_list_ui(
+                    &mut columns[0],
+                    ListKind::Include.label(),
+                    &mut state.include_files,
+                    &mut state.selected_include,
+                    &mut state.include_manual_entry,
+                    folder_selected,
+                )
+            };
             if include_actions.browse_add && app.handle_add_file(ListKind::Include) {
                 app.refresh_psu_toml_editor();
             }
@@ -145,14 +148,17 @@ pub(crate) fn file_filters_section(app: &mut PackerApp, ui: &mut egui::Ui) {
                 app.refresh_psu_toml_editor();
             }
 
-            let exclude_actions = file_list_ui(
-                &mut columns[1],
-                ListKind::Exclude.label(),
-                &mut app.exclude_files,
-                &mut app.selected_exclude,
-                &mut app.exclude_manual_entry,
-                folder_selected,
-            );
+            let exclude_actions = {
+                let state = &mut app.state;
+                file_list_ui(
+                    &mut columns[1],
+                    ListKind::Exclude.label(),
+                    &mut state.exclude_files,
+                    &mut state.selected_exclude,
+                    &mut state.exclude_manual_entry,
+                    folder_selected,
+                )
+            };
             if exclude_actions.browse_add && app.handle_add_file(ListKind::Exclude) {
                 app.refresh_psu_toml_editor();
             }
@@ -755,9 +761,10 @@ impl PackerApp {
     }
 
     fn list_mut(&mut self, kind: ListKind) -> (&mut Vec<String>, &mut Option<usize>) {
+        let state = &mut self.state;
         match kind {
-            ListKind::Include => (&mut self.include_files, &mut self.selected_include),
-            ListKind::Exclude => (&mut self.exclude_files, &mut self.selected_exclude),
+            ListKind::Include => (&mut state.include_files, &mut state.selected_include),
+            ListKind::Exclude => (&mut state.exclude_files, &mut state.selected_exclude),
         }
     }
 
