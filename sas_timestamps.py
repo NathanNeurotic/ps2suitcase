@@ -1,34 +1,40 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-SAS-TIMESTAMPS (FAT-safe ordering, free-form PS2 bias, dash-ignoring, slots-per-category config)
+"""sas_timestamps
+==================
 
-Windows-only utility: deterministically set creation/modified/access times so root-level
-folders (and everything inside them) are ordered newest→oldest by a stable mapping from
-folder name → timestamp. Timestamps are accurate to FAT/VFAT realities.
+Deterministically set creation/modified/access times so root-level folders (and everything
+inside them) are ordered newest→oldest by a stable mapping from folder name → timestamp.
 
-Key behavior:
-- Base timeline starts at 12/31/2098 00:00:00 (LOCAL). Each category owns one future day and
-  projects within that category advance forward in two-second slots.
-- Newest → oldest category blocks in this order:
-    APP_*  → APPS → PS1_* → EMU_* → GME_* → DST_* → DBG_* → RAA_* → RTE_* → DEFAULT → SYS_* → ZZY_* → ZZZ_*
-- Unprefixed special names are mapped to an **effective**, prefixed name (e.g., BOOT → SYS_BOOT)
-  and that **effective** name is used both for:
-    (1) category selection,
-    (2) within-category alphabetical ordering.
-- **Dashes ('-') are ignored for ordering** (removed before lex ordering).
-- **FAT-safe mode** (`--fat-safe`): snaps all timestamps to **even seconds** (microseconds=0) and uses **2 s spacing**,
-  matching FAT/VFAT mtime precision and preventing copy/rounding drift.
-- **PS2 bias** (`--ps2-bias-seconds`): applies an additional signed seconds offset so the PS2 browser's displayed times
-  match Windows Explorer display exactly, even if the PS2 reader/RTC applies a nonstandard skew.
-- Dry-run (`--dry-run`) writes SAS-TIMESTAMPS-dryrun.tsv (newest→oldest) in the current working directory.
+This script merges the behaviour of the previous `SAS-TIMESTAMPS-V2.py` and
+`timestampdiscrepancyfixtest1.py` utilities into a single configurable CLI.
+
+Key behaviour (configurable via flags):
+
+* **Timeline modes**
+  * `local-forward` (default): starts at **12/31/2098 00:00:00 local time** and moves forward by
+    category/day. This mirrors the FAT/VFAT-focused script.
+  * `fixed-utc`: starts from **2099-01-01 07:59:59Z** and subtracts offsets, matching the original
+    UTC-based script.
+* **Spacing** – `--seconds-between-items` and `--slots-per-category` control the spacing and slot
+  budget. Defaults keep the FAT-safe two-second cadence but you can specify `--seconds-between-items 1`
+  to match the older one-second spacing.
+* **Stable tie-break nudge** – opt into the deterministic 0/1 second nudge with `--stable-nudge`
+  (used by the original UTC script).
+* **FAT-safe snapping** – `--fat-safe` snaps timestamps to even seconds (0 µs) so FAT/VFAT devices
+  cannot round the values differently.
+* **PS2 bias** – `--ps2-bias-seconds` applies an additional signed offset so a skewed PS2 RTC can
+  display the same times Windows shows.
+* **Dry-run output** – `--dry-run` together with `--dry-run-format {csv,tsv}` writes the planned
+  timeline (newest→oldest) without touching the filesystem.
 
 NOTE: Requires Windows (uses SetFileTime via ctypes).
 """
 
 import argparse
 import ctypes
+import csv
 import os
 import sys
 from datetime import datetime, timezone, timedelta
@@ -37,12 +43,19 @@ from datetime import datetime, timezone, timedelta
 # ===== USER CONFIG =======
 # =========================
 # FAT-safe default spacing: 2 seconds (FAT mtime has 2-second granularity)
-SECONDS_BETWEEN_ITEMS = 2
+DEFAULT_SECONDS_BETWEEN_ITEMS = 2
 
 # Big slot budget so each name gets a unique second within its category, even with many items.
 # 43,200 slots × 2 seconds = 86,400 seconds (exactly one day) per category. Nice for viewing in
 # a file browser as each category will land on its own day.
-SLOTS_PER_CATEGORY   = 43_200
+DEFAULT_SLOTS_PER_CATEGORY   = 43_200
+
+# Runtime-adjustable spacing settings (overridden by CLI options)
+SECONDS_BETWEEN_ITEMS = DEFAULT_SECONDS_BETWEEN_ITEMS
+SLOTS_PER_CATEGORY = DEFAULT_SLOTS_PER_CATEGORY
+
+# Enable deterministic 0/1 second nudge (off by default; enabled via --stable-nudge)
+ENABLE_STABLE_NUDGE = False
 
 # Comma-separated lists of names (no prefixes) to be treated as if they belong to these categories.
 # Edit these to add your own folder names (case-insensitive). Whitespace is ignored.
@@ -243,22 +256,41 @@ def _slot_index_within_category(effective: str) -> int:
         slot = SLOTS_PER_CATEGORY - 1
     return slot
 
+def _stable_hash01(s: str) -> int:
+    """Very small deterministic hash returning 0 or 1."""
+
+    h = 2166136261
+    for ch in s:
+        h ^= ord(ch)
+        h = (h * 16777619) & 0xFFFFFFFF
+    return h & 1
+
+
 def _deterministic_offset_seconds(folder_name: str):
-    """
-    Returns (offset_seconds, cat_idx, slot, effective_name).
-    Note: No 0/1-second nudge; rely on 2-second spacing for FAT safety.
-    """
+    """Return (offset_seconds, cat_idx, slot, effective_name)."""
+
     eff = _normalize_name_for_rules(folder_name)
     cat_idx = _category_priority_index(eff)
-    slot    = _slot_index_within_category(eff)
+    slot = _slot_index_within_category(eff)
 
-    nudge = 0  # removed to avoid FAT rounding collisions
+    nudge = _stable_hash01(eff) if ENABLE_STABLE_NUDGE else 0
 
-    cat_offset  = cat_idx * CATEGORY_BLOCK_SECONDS
+    cat_offset = cat_idx * CATEGORY_BLOCK_SECONDS
     name_offset = (slot * SECONDS_BETWEEN_ITEMS) + nudge
     return cat_offset + name_offset, cat_idx, slot, eff
 
-# --- Timestamp planner ---
+# --- Timestamp planners ---
+FIXED_BASE_UTC = datetime(2099, 1, 1, 7, 59, 59, tzinfo=timezone.utc)
+
+
+def _recompute_spacing(seconds_between: int, slots_per_category: int) -> None:
+    global SECONDS_BETWEEN_ITEMS, SLOTS_PER_CATEGORY, CATEGORY_BLOCK_SECONDS
+
+    SECONDS_BETWEEN_ITEMS = seconds_between
+    SLOTS_PER_CATEGORY = slots_per_category
+    CATEGORY_BLOCK_SECONDS = SLOTS_PER_CATEGORY * SECONDS_BETWEEN_ITEMS
+
+
 def _anchor_local_datetime() -> datetime:
     """
     Return the local anchor datetime (used as ANCHOR_START in the forward timeline).
@@ -267,14 +299,19 @@ def _anchor_local_datetime() -> datetime:
     local_tz = datetime.now().astimezone().tzinfo
     return local_naive.replace(tzinfo=local_tz)
 
-def _planned_timestamp_for_folder(folder_name: str):
-    """
-    Return a tuple (utc_dt, effective_name, category_label, cat_idx, slot_idx, offset_sec).
-    """
-    anchor_local = _anchor_local_datetime()
+def _planned_timestamp_for_folder(folder_name: str, timeline: str):
+    """Return (utc_dt, effective_name, category_label, cat_idx, slot_idx, offset_sec)."""
+
     offset_sec, cat_idx, slot_idx, eff = _deterministic_offset_seconds(folder_name)
-    planned_local = anchor_local + timedelta(seconds=offset_sec)
-    ts_utc = planned_local.astimezone(timezone.utc)
+
+    if timeline == "fixed-utc":
+        base_utc = FIXED_BASE_UTC
+        ts_utc = datetime.fromtimestamp(base_utc.timestamp() - offset_sec, tz=timezone.utc)
+    else:
+        anchor_local = _anchor_local_datetime()
+        planned_local = anchor_local + timedelta(seconds=offset_sec)
+        ts_utc = planned_local.astimezone(timezone.utc)
+
     return ts_utc, eff, _category_label_for_effective(eff), cat_idx, slot_idx, offset_sec
 
 # --- FAT-safe snapping ---
@@ -312,21 +349,48 @@ def _set_folder_and_contents_times(root_folder: str, dt_utc: datetime, verbose=F
         print(f"[WARN] Could not set times for ROOT {root_folder}: {e}", file=sys.stderr)
 
 # --- Dry-run writer ---
-def _write_dryrun_tsv(plan, base_path: str, verbose=False) -> str:
-    """
-    plan: list of tuples (name, ts_utc, eff, cat_lbl, cat_idx, slot_idx, offset_sec)
-    Writes TSV in CWD (not base_path), sorted newest→oldest by ts_utc.
-    """
+def _write_dryrun(plan, base_path: str, fmt: str, verbose=False) -> str:
+    """Write the dry-run plan to CSV or TSV (newest→oldest)."""
+
     cwd = os.getcwd()
-    out_path = os.path.join(cwd, "SAS-TIMESTAMPS-dryrun.tsv")
+    out_path = os.path.join(cwd, f"SAS-TIMESTAMPS-dryrun.{fmt}")
     plan_sorted = sorted(plan, key=lambda x: x[1], reverse=True)
+
+    dialect = "excel" if fmt == "csv" else "excel-tab"
     with open(out_path, "w", encoding="utf-8", newline="") as f:
-        f.write("Order\tCategory\tCatIndex\tSlot\tOffsetSec\tName\tEffectiveName\tLocalTime\tUTC\tFullPath\n")
+        writer = csv.writer(f, dialect=dialect)
+        writer.writerow([
+            "Order",
+            "Category",
+            "CatIndex",
+            "Slot",
+            "OffsetSec",
+            "Name",
+            "EffectiveName",
+            "Payload",
+            "LocalTime",
+            "UTC",
+            "FullPath",
+        ])
         for idx, (name, ts_utc, eff, cat_lbl, cat_idx, slot_idx, offset_sec) in enumerate(plan_sorted, start=1):
+            payload = _payload_for_effective(eff)
             local_str = ts_utc.astimezone().strftime("%m/%d/%Y %H:%M:%S %Z")
             utc_str = ts_utc.strftime("%Y-%m-%d %H:%M:%S UTC")
             full = os.path.join(base_path, name)
-            f.write(f"{idx}\t{cat_lbl}\t{cat_idx}\t{slot_idx}\t{offset_sec}\t{name}\t{eff}\t{local_str}\t{utc_str}\t{full}\n")
+            writer.writerow([
+                idx,
+                cat_lbl,
+                cat_idx,
+                slot_idx,
+                offset_sec,
+                name,
+                eff,
+                payload,
+                local_str,
+                utc_str,
+                full,
+            ])
+
     if verbose:
         print(f"[DRY-RUN] Wrote plan to: {out_path}")
         print(f"[DRY-RUN] {len(plan_sorted)} root folders listed (newest → oldest).")
@@ -340,15 +404,40 @@ def main():
     ap.add_argument("path", nargs="?", default=".",
                     help="Top-level directory containing the root folders to timestamp (default: current dir).")
     ap.add_argument("--dry-run", action="store_true",
-                    help="Do NOT modify timestamps; output SAS-TIMESTAMPS-dryrun.tsv in the current working directory.")
+                    help="Do NOT modify timestamps; write SAS-TIMESTAMPS-dryrun.[csv|tsv] in the current working directory.")
     ap.add_argument("--verbose", action="store_true", help="Extra logging.")
     ap.add_argument("--fat-safe", action="store_true",
                     help="Snap all times to even seconds (0 µs) to match FAT/VFAT mtime precision.")
     ap.add_argument("--ps2-bias-seconds", type=int, default=0,
                     help="Signed seconds to bias planned timestamps so PS2 display matches Windows. "
                          "Example: -3563 to counter a +59m23s skew on PS2.")
+    ap.add_argument("--timeline", choices=["local-forward", "fixed-utc"], default="local-forward",
+                    help="Timeline strategy. 'local-forward' matches the FAT-safe tool; 'fixed-utc' matches the original UTC tool.")
+    ap.add_argument("--seconds-between-items", type=int, default=DEFAULT_SECONDS_BETWEEN_ITEMS,
+                    help="Spacing (seconds) between projects inside a category (default: %(default)s).")
+    ap.add_argument("--slots-per-category", type=int, default=DEFAULT_SLOTS_PER_CATEGORY,
+                    help="Slot budget per category (default: %(default)s).")
+    ap.add_argument("--dry-run-format", choices=["csv", "tsv"], default="tsv",
+                    help="File format for the --dry-run output (default: %(default)s).")
+    ap.add_argument("--stable-nudge", dest="stable_nudge", action="store_true",
+                    help="Apply a deterministic 0/1-second nudge to break ties (used by the original UTC script).")
+    ap.add_argument("--no-stable-nudge", dest="stable_nudge", action="store_false",
+                    help="Disable the deterministic 0/1-second nudge (default).")
+    ap.set_defaults(stable_nudge=False)
 
     args = ap.parse_args()
+
+    if args.seconds_between_items <= 0:
+        print("--seconds-between-items must be positive.", file=sys.stderr)
+        sys.exit(1)
+    if args.slots_per_category <= 0:
+        print("--slots-per-category must be positive.", file=sys.stderr)
+        sys.exit(1)
+
+    _recompute_spacing(args.seconds_between_items, args.slots_per_category)
+
+    global ENABLE_STABLE_NUDGE
+    ENABLE_STABLE_NUDGE = args.stable_nudge
 
     base_path = os.path.abspath(args.path)
     if not os.path.isdir(base_path):
@@ -363,7 +452,7 @@ def main():
     plan = []
     for name in root_folders:
         try:
-            ts, eff, cat_lbl, cat_idx, slot_idx, offset_sec = _planned_timestamp_for_folder(name)
+            ts, eff, cat_lbl, cat_idx, slot_idx, offset_sec = _planned_timestamp_for_folder(name, args.timeline)
 
             # Apply free-form PS2 bias (to counter PS2 skew so displays match)
             if args.ps2_bias_seconds:
@@ -379,8 +468,8 @@ def main():
         plan.append((name, ts, eff, cat_lbl, cat_idx, slot_idx, offset_sec))
 
     if args.dry_run:
-        tsv_path = _write_dryrun_tsv(plan, base_path, verbose=args.verbose)
-        print(f"Dry-run complete. Plan written to: {tsv_path}")
+        out_path = _write_dryrun(plan, base_path, args.dry_run_format, verbose=args.verbose)
+        print(f"Dry-run complete. Plan written to: {out_path}")
         return
 
     for name, ts, eff, cat_lbl, cat_idx, slot_idx, offset_sec in plan:
