@@ -239,8 +239,9 @@ impl eframe::App for PackerApp {
                             &mut self.psu_toml_editor,
                         );
                         if actions.save_clicked {
+                            let folder = self.folder.as_deref();
                             match state::save_editor_to_disk(
-                                self.folder.as_deref(),
+                                folder,
                                 "psu.toml",
                                 &mut self.psu_toml_editor,
                             ) {
@@ -269,8 +270,9 @@ impl eframe::App for PackerApp {
                             &mut self.title_cfg_editor,
                         );
                         if actions.save_clicked {
+                            let folder = self.folder.clone();
                             match state::save_editor_to_disk(
-                                self.folder.as_deref(),
+                                folder.as_deref(),
                                 "title.cfg",
                                 &mut self.title_cfg_editor,
                             ) {

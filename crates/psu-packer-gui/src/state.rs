@@ -1,34 +1,28 @@
+use std::ops::{Deref, DerefMut};
 use std::{
     collections::{HashMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-    thread,
 };
 
 use crate::ui;
 use crate::ui::theme;
-use crate::{
-    pack_job::{PackJob, PackOutcome, PackPreparation, PackProgress, PendingPackAction},
-    sas_timestamps,
-};
-use chrono::NaiveDateTime;
 use eframe::egui::{self, Widget};
 use gui_core::{
     actions::{Action, ActionDispatcher, MetadataTarget},
     state::{
-        MissingRequiredFile, ProjectRequirementStatus, SasPrefix, TimestampRulesUiState,
-        TimestampStrategy, REQUIRED_PROJECT_FILES, TIMESTAMP_RULES_FILE,
+        MissingRequiredFile, PackOutcome, PackPreparation, PackerState, PendingPackAction,
+        TimestampStrategy,
     },
 };
+#[cfg(test)]
+use gui_core::state::{SasPrefix, REQUIRED_PROJECT_FILES, TIMESTAMP_RULES_FILE};
 use icon_sys_ui::IconSysState;
 use indexmap::IndexMap;
 use ps2_filetypes::{templates, IconSys, PSUEntryKind, TitleCfg, PSU};
 use psu_packer::split_icon_sys_title;
 use tempfile::{tempdir, TempDir};
 use toml::Table;
-
-use sas_timestamps::TimestampRules;
 
 pub(crate) const CENTERED_COLUMN_MAX_WIDTH: f32 = 1180.0;
 pub(crate) const PACK_CONTROLS_TWO_COLUMN_MIN_WIDTH: f32 = 940.0;
@@ -194,36 +188,9 @@ impl TextFileEditor {
 }
 
 pub struct PackerApp {
-    pub(crate) folder: Option<PathBuf>,
-    pub(crate) output: String,
-    pub(crate) status: String,
-    pub(crate) error_message: Option<String>,
-    pub(crate) selected_prefix: SasPrefix,
-    pub(crate) folder_base_name: String,
-    pub(crate) psu_file_base_name: String,
-    pub(crate) timestamp: Option<NaiveDateTime>,
-    pub(crate) timestamp_strategy: TimestampStrategy,
-    pub(crate) timestamp_from_rules: bool,
-    pub(crate) source_timestamp: Option<NaiveDateTime>,
-    pub(crate) manual_timestamp: Option<NaiveDateTime>,
-    pub(crate) timestamp_rules: TimestampRules,
-    pub(crate) timestamp_rules_loaded_from_file: bool,
-    pub(crate) timestamp_rules_modified: bool,
-    pub(crate) timestamp_rules_error: Option<String>,
-    pub(crate) timestamp_rules_ui: TimestampRulesUiState,
-    pub(crate) include_files: Vec<String>,
-    pub(crate) exclude_files: Vec<String>,
-    pub(crate) include_manual_entry: String,
-    pub(crate) exclude_manual_entry: String,
-    pub(crate) selected_include: Option<usize>,
-    pub(crate) selected_exclude: Option<usize>,
-    pub(crate) missing_required_project_files: Vec<MissingRequiredFile>,
-    pending_pack_action: Option<PendingPackAction>,
-    pub(crate) loaded_psu_path: Option<PathBuf>,
-    pub(crate) loaded_psu_files: Vec<String>,
+    pub(crate) state: PackerState,
     pub(crate) show_exit_confirm: bool,
     pub(crate) exit_confirmed: bool,
-    pub(crate) source_present_last_frame: bool,
     pub(crate) icon_sys_enabled: bool,
     pub(crate) icon_sys_title_line1: String,
     pub(crate) icon_sys_title_line2: String,
@@ -231,87 +198,21 @@ pub struct PackerApp {
     pub(crate) icon_sys_use_existing: bool,
     pub(crate) icon_sys_existing: Option<IconSys>,
     pub(crate) zoom_factor: f32,
-    pack_job: Option<PackJob>,
-    temp_workspace: Option<TempDir>,
     pub(crate) editor_tab: EditorTab,
     pub(crate) psu_toml_editor: TextFileEditor,
     pub(crate) title_cfg_editor: TextFileEditor,
     pub(crate) psu_toml_sync_blocked: bool,
     pub(crate) theme: theme::Palette,
     #[cfg(test)]
-    test_pack_job_started: bool,
-}
-
-pub(crate) struct ErrorMessage {
-    message: String,
-    failed_files: Vec<String>,
-}
-
-impl From<String> for ErrorMessage {
-    fn from(message: String) -> Self {
-        Self {
-            message,
-            failed_files: Vec::new(),
-        }
-    }
-}
-
-impl From<&str> for ErrorMessage {
-    fn from(message: &str) -> Self {
-        Self {
-            message: message.to_owned(),
-            failed_files: Vec::new(),
-        }
-    }
-}
-
-impl<S> From<(S, Vec<String>)> for ErrorMessage
-where
-    S: Into<String>,
-{
-    fn from((message, failed_files): (S, Vec<String>)) -> Self {
-        Self {
-            message: message.into(),
-            failed_files,
-        }
-    }
+    pub(crate) test_pack_job_started: bool,
 }
 
 impl Default for PackerApp {
     fn default() -> Self {
-        let timestamp_rules = TimestampRules::default();
-        let timestamp_rules_ui = TimestampRulesUiState::from_rules(&timestamp_rules);
         Self {
-            folder: None,
-            output: String::new(),
-            status: String::new(),
-            error_message: None,
-            selected_prefix: SasPrefix::default(),
-            folder_base_name: String::new(),
-            psu_file_base_name: String::new(),
-            timestamp: None,
-            timestamp_strategy: TimestampStrategy::default(),
-            timestamp_from_rules: false,
-            source_timestamp: None,
-            manual_timestamp: None,
-            timestamp_rules,
-            timestamp_rules_loaded_from_file: false,
-            timestamp_rules_modified: false,
-            timestamp_rules_error: None,
-            timestamp_rules_ui,
-            include_files: Vec::new(),
-            exclude_files: Vec::new(),
-            include_manual_entry: String::new(),
-            exclude_manual_entry: String::new(),
-            selected_include: None,
-            selected_exclude: None,
-            missing_required_project_files: Vec::new(),
-            pending_pack_action: None,
-            loaded_psu_path: None,
-            loaded_psu_files: Vec::new(),
+            state: PackerState::default(),
             show_exit_confirm: false,
             exit_confirmed: false,
-            source_present_last_frame: false,
             icon_sys_enabled: false,
             icon_sys_title_line1: String::new(),
             icon_sys_title_line2: String::new(),
@@ -319,8 +220,6 @@ impl Default for PackerApp {
             icon_sys_use_existing: false,
             icon_sys_existing: None,
             zoom_factor: 1.0,
-            pack_job: None,
-            temp_workspace: None,
             editor_tab: EditorTab::PsuSettings,
             psu_toml_editor: TextFileEditor::default(),
             title_cfg_editor: TextFileEditor::default(),
@@ -332,117 +231,26 @@ impl Default for PackerApp {
     }
 }
 
+impl Deref for PackerApp {
+    type Target = PackerState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl DerefMut for PackerApp {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state
+    }
+}
+
 impl PackerApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let mut app = Self::default();
         app.zoom_factor = cc.egui_ctx.pixels_per_point();
         theme::install(&cc.egui_ctx, &app.theme);
         app
-    }
-
-    fn timestamp_rules_path_from(folder: &Path) -> PathBuf {
-        folder.join(TIMESTAMP_RULES_FILE)
-    }
-
-    pub(crate) fn timestamp_rules_path(&self) -> Option<PathBuf> {
-        self.folder
-            .as_ref()
-            .map(|folder| Self::timestamp_rules_path_from(folder))
-    }
-
-    fn active_project_requirements(&self) -> Vec<MissingRequiredFile> {
-        let mut requirements = REQUIRED_PROJECT_FILES
-            .iter()
-            .map(|name| MissingRequiredFile::always(name))
-            .collect::<Vec<_>>();
-
-        if self.include_requires_file("BOOT.ELF") {
-            requirements.push(MissingRequiredFile::included("BOOT.ELF"));
-        }
-
-        if self.uses_timestamp_rules_file() {
-            requirements.push(MissingRequiredFile::timestamp_rules());
-        }
-
-        requirements
-    }
-
-    fn missing_required_project_files_for(&self, folder: &Path) -> Vec<MissingRequiredFile> {
-        let mut missing = Vec::new();
-
-        for requirement in self.active_project_requirements() {
-            let candidate = folder.join(&requirement.name);
-            if !candidate.is_file() {
-                missing.push(requirement);
-            }
-        }
-
-        missing
-    }
-
-    fn include_requires_file(&self, file_name: &str) -> bool {
-        self.include_files
-            .iter()
-            .any(|entry| entry.eq_ignore_ascii_case(file_name))
-    }
-
-    fn uses_timestamp_rules_file(&self) -> bool {
-        matches!(self.timestamp_strategy, TimestampStrategy::SasRules)
-            && (self.timestamp_rules_loaded_from_file || self.timestamp_rules_modified)
-    }
-
-    pub(crate) fn refresh_missing_required_project_files(&mut self) {
-        if let Some(folder) = self.folder.clone() {
-            self.missing_required_project_files = self.missing_required_project_files_for(&folder);
-        } else {
-            self.missing_required_project_files.clear();
-        }
-    }
-
-    pub(crate) fn project_requirement_statuses(&self) -> Option<Vec<ProjectRequirementStatus>> {
-        self.folder.as_ref()?;
-
-        let missing_names: HashSet<&str> = self
-            .missing_required_project_files
-            .iter()
-            .map(|entry| entry.name.as_str())
-            .collect();
-
-        let statuses = self
-            .active_project_requirements()
-            .into_iter()
-            .map(|file| {
-                let satisfied = !missing_names.contains(file.name.as_str());
-                ProjectRequirementStatus { file, satisfied }
-            })
-            .collect::<Vec<_>>();
-
-        Some(statuses)
-    }
-
-    pub(crate) fn pending_pack_missing_files(&self) -> Option<&[MissingRequiredFile]> {
-        self.pending_pack_action
-            .as_ref()
-            .map(|action| action.missing_files())
-    }
-
-    pub(crate) fn confirm_pending_pack_action(&mut self) {
-        if let Some(action) = self.pending_pack_action.take() {
-            match action {
-                PendingPackAction::Pack {
-                    folder,
-                    output_path,
-                    config,
-                    ..
-                } => {
-                    self.begin_pack_job(folder, output_path, config);
-                }
-            }
-        }
-    }
-
-    pub(crate) fn cancel_pending_pack_action(&mut self) {
-        self.pending_pack_action = None;
     }
 
     pub(crate) fn editor_tab_button(
@@ -466,192 +274,36 @@ impl PackerApp {
         }
     }
 
-    pub(crate) fn load_timestamp_rules_from_folder(&mut self, folder: &Path) {
-        let path = Self::timestamp_rules_path_from(folder);
-        match fs::read_to_string(&path) {
-            Ok(content) => match serde_json::from_str::<TimestampRules>(&content) {
-                Ok(mut rules) => {
-                    rules.sanitize();
-                    self.timestamp_rules = rules;
-                    self.timestamp_rules_error = None;
-                    self.timestamp_rules_loaded_from_file = true;
-                }
-                Err(err) => {
-                    self.timestamp_rules = TimestampRules::default();
-                    self.timestamp_rules_error =
-                        Some(format!("Failed to parse {}: {err}", path.display()));
-                    self.timestamp_rules_loaded_from_file = true;
-                }
-            },
-            Err(err) => {
-                if err.kind() == io::ErrorKind::NotFound {
-                    self.timestamp_rules = TimestampRules::default();
-                    self.timestamp_rules_error = None;
-                    self.timestamp_rules_loaded_from_file = false;
-                } else {
-                    self.timestamp_rules = TimestampRules::default();
-                    self.timestamp_rules_error =
-                        Some(format!("Failed to read {}: {err}", path.display()));
-                    self.timestamp_rules_loaded_from_file = true;
-                }
-            }
-        }
-
-        self.timestamp_rules_ui = TimestampRulesUiState::from_rules(&self.timestamp_rules);
-        self.timestamp_rules_ui
-            .apply_to_rules(&mut self.timestamp_rules);
-        self.timestamp_rules_modified = false;
-    }
-
-    pub(crate) fn save_timestamp_rules(&mut self) -> Result<PathBuf, String> {
-        let Some(folder) = self.folder.as_ref() else {
-            return Err("Select a folder before saving timestamp rules.".to_string());
-        };
-
-        self.timestamp_rules_ui
-            .apply_to_rules(&mut self.timestamp_rules);
-        let serialized = self
-            .timestamp_rules_ui
-            .serialize()
-            .map_err(|err| format!("Failed to serialize timestamp rules: {err}"))?;
-
-        let path = Self::timestamp_rules_path_from(folder);
-        fs::write(&path, serialized)
-            .map_err(|err| format!("Failed to write {}: {err}", path.display()))?;
-
-        self.timestamp_rules_ui = TimestampRulesUiState::from_rules(&self.timestamp_rules);
-        self.timestamp_rules_modified = false;
-        self.timestamp_rules_error = None;
-        self.timestamp_rules_loaded_from_file = true;
-        Ok(path)
-    }
-
     pub(crate) fn set_timestamp_strategy(&mut self, strategy: TimestampStrategy) {
-        if self.timestamp_strategy == strategy {
-            return;
+        if PackerState::set_timestamp_strategy(self, strategy) {
+            self.refresh_psu_toml_editor();
         }
-
-        self.timestamp_strategy = strategy;
-
-        if matches!(self.timestamp_strategy, TimestampStrategy::Manual)
-            && self.manual_timestamp.is_none()
-        {
-            if let Some(source) = self.source_timestamp {
-                self.manual_timestamp = Some(source);
-            } else if let Some(planned) = self.planned_timestamp_for_current_source() {
-                self.manual_timestamp = Some(planned);
-            }
-        }
-
-        self.refresh_timestamp_from_strategy();
     }
 
     pub(crate) fn refresh_timestamp_from_strategy(&mut self) {
-        let new_timestamp = match self.timestamp_strategy {
-            TimestampStrategy::None => None,
-            TimestampStrategy::InheritSource => self.source_timestamp,
-            TimestampStrategy::SasRules => self.planned_timestamp_for_current_source(),
-            TimestampStrategy::Manual => self.manual_timestamp,
-        };
-
-        let changed = self.timestamp != new_timestamp;
-        self.timestamp = new_timestamp;
-        self.timestamp_from_rules = matches!(self.timestamp_strategy, TimestampStrategy::SasRules)
-            && self.timestamp.is_some();
-
-        if changed {
+        if PackerState::refresh_timestamp_from_strategy(self) {
             self.refresh_psu_toml_editor();
         }
     }
 
     pub(crate) fn sync_timestamp_after_source_update(&mut self) {
-        let planned = self.planned_timestamp_for_current_source();
-
-        if matches!(self.timestamp_strategy, TimestampStrategy::None) {
-            if self.source_timestamp.is_some() {
-                self.timestamp_strategy = TimestampStrategy::InheritSource;
-            } else if planned.is_some() {
-                self.timestamp_strategy = TimestampStrategy::SasRules;
-            }
+        if PackerState::sync_timestamp_after_source_update(self) {
+            self.refresh_psu_toml_editor();
         }
-
-        if matches!(self.timestamp_strategy, TimestampStrategy::Manual)
-            && self.manual_timestamp.is_none()
-        {
-            if let Some(source) = self.source_timestamp {
-                self.manual_timestamp = Some(source);
-            } else if let Some(planned) = planned {
-                self.manual_timestamp = Some(planned);
-            }
-        }
-
-        self.refresh_timestamp_from_strategy();
     }
 
     pub(crate) fn mark_timestamp_rules_modified(&mut self) {
-        self.timestamp_rules_ui
-            .apply_to_rules(&mut self.timestamp_rules);
-        self.timestamp_rules_modified = true;
-        self.recompute_timestamp_from_rules();
-    }
-
-    fn recompute_timestamp_from_rules(&mut self) {
-        if !matches!(self.timestamp_strategy, TimestampStrategy::SasRules) {
-            return;
-        }
-
-        self.refresh_timestamp_from_strategy();
+        PackerState::mark_timestamp_rules_modified(self);
+        self.refresh_psu_toml_editor();
     }
 
     pub(crate) fn apply_planned_timestamp(&mut self) {
         self.set_timestamp_strategy(TimestampStrategy::SasRules);
     }
 
-    pub(crate) fn planned_timestamp_for_current_source(&self) -> Option<NaiveDateTime> {
-        if let Some(folder) = self.folder.as_ref() {
-            return sas_timestamps::planned_timestamp_for_folder(
-                folder.as_path(),
-                &self.timestamp_rules,
-            );
-        }
-
-        let name = self.folder_name();
-        if name.trim().is_empty() {
-            return None;
-        }
-
-        sas_timestamps::planned_timestamp_for_name(&name, &self.timestamp_rules)
-    }
-
     pub(crate) fn reset_timestamp_rules_to_default(&mut self) {
-        self.timestamp_rules = TimestampRules::default();
-        self.timestamp_rules_error = None;
-        self.timestamp_rules_ui = TimestampRulesUiState::from_rules(&self.timestamp_rules);
-        self.timestamp_rules_ui
-            .apply_to_rules(&mut self.timestamp_rules);
-        self.timestamp_rules_loaded_from_file = false;
-        self.mark_timestamp_rules_modified();
-    }
-
-    pub(crate) fn set_error_message<M>(&mut self, message: M)
-    where
-        M: Into<ErrorMessage>,
-    {
-        let message = message.into();
-        let mut text = message.message;
-        if !message.failed_files.is_empty() {
-            if !text.is_empty() {
-                text.push(' ');
-            }
-            text.push_str("Failed files: ");
-            text.push_str(&message.failed_files.join(", "));
-        }
-        self.error_message = Some(text);
-        self.status.clear();
-    }
-
-    pub(crate) fn format_missing_required_files_message(missing: &[MissingRequiredFile]) -> String {
-        gui_core::validation::format_missing_required_files_message(missing)
+        PackerState::reset_timestamp_rules_to_default(self);
+        self.refresh_psu_toml_editor();
     }
 
     pub(crate) fn clear_error_message(&mut self) {
@@ -704,172 +356,24 @@ impl PackerApp {
     }
 
     pub(crate) fn reset_metadata_fields(&mut self) {
-        self.selected_prefix = SasPrefix::default();
-        self.folder_base_name.clear();
-        self.psu_file_base_name.clear();
-        self.timestamp = None;
-        self.timestamp_strategy = TimestampStrategy::None;
-        self.timestamp_from_rules = false;
-        self.source_timestamp = None;
-        self.manual_timestamp = None;
-        self.include_files.clear();
-        self.exclude_files.clear();
-        self.include_manual_entry.clear();
-        self.exclude_manual_entry.clear();
-        self.selected_include = None;
-        self.selected_exclude = None;
+        PackerState::reset_metadata_fields(self);
         self.reset_icon_sys_fields();
     }
 
-    pub(crate) fn folder_name(&self) -> String {
-        let mut name = String::from(self.selected_prefix.as_str());
-        name.push_str(&self.folder_base_name);
-        name
-    }
-
-    fn effective_psu_file_base_name(&self) -> Option<String> {
-        let trimmed_file = self.psu_file_base_name.trim();
-        if !trimmed_file.is_empty() {
-            return Some(trimmed_file.to_string());
-        }
-
-        let trimmed_folder = self.folder_base_name.trim();
-        if trimmed_folder.is_empty() {
-            None
-        } else {
-            Some(trimmed_folder.to_string())
-        }
-    }
-
-    fn existing_output_directory(&self) -> Option<PathBuf> {
-        let trimmed_output = self.output.trim();
-        if trimmed_output.is_empty() {
-            return None;
-        }
-
-        let path = Path::new(trimmed_output);
-        path.parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .map(|parent| parent.to_path_buf())
-    }
-
-    fn loaded_psu_directory(&self) -> Option<PathBuf> {
-        self.loaded_psu_path
-            .as_ref()
-            .and_then(|path| path.parent())
-            .map(|parent| parent.to_path_buf())
-    }
-
-    pub(crate) fn default_output_directory(&self, fallback_dir: Option<&Path>) -> Option<PathBuf> {
-        if let Some(existing) = self.existing_output_directory() {
-            return Some(existing);
-        }
-
-        if let Some(dir) = fallback_dir {
-            return Some(dir.to_path_buf());
-        }
-
-        if let Some(folder) = self.folder.as_ref() {
-            return Some(folder.clone());
-        }
-
-        self.loaded_psu_directory()
-    }
-
-    pub(crate) fn default_output_path(&self) -> Option<PathBuf> {
-        self.default_output_path_with(None)
-    }
-
-    pub(crate) fn default_output_path_with(&self, fallback_dir: Option<&Path>) -> Option<PathBuf> {
-        let file_name = self.default_output_file_name()?;
-        let directory = self.default_output_directory(fallback_dir);
-        Some(match directory {
-            Some(dir) => dir.join(file_name),
-            None => PathBuf::from(file_name),
-        })
-    }
-
-    pub(crate) fn default_output_file_name(&self) -> Option<String> {
-        let base_name = self.effective_psu_file_base_name()?;
-        let mut stem = String::from(self.selected_prefix.as_str());
-        stem.push_str(&base_name);
-        if stem.is_empty() {
-            None
-        } else {
-            Some(format!("{stem}.psu"))
-        }
-    }
-
-    fn update_output_if_matches_default(&mut self, previous_default_output: Option<String>) {
-        let should_update = if self.output.trim().is_empty() {
-            true
-        } else if let Some(previous_default) = previous_default_output {
-            Path::new(&self.output)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .map(|name| name == previous_default)
-                .unwrap_or(false)
-        } else {
-            false
-        };
-
-        if should_update {
-            match self.default_output_path() {
-                Some(path) => {
-                    self.output = path.display().to_string();
-                }
-                None => self.output.clear(),
-            }
-        }
-    }
-
     pub(crate) fn metadata_inputs_changed(&mut self, previous_default_output: Option<String>) {
-        if self.psu_file_base_name.trim().is_empty() {
-            let trimmed_folder = self.folder_base_name.trim();
-            if !trimmed_folder.is_empty() {
-                self.psu_file_base_name = trimmed_folder.to_string();
-            }
-        }
-
-        self.update_output_if_matches_default(previous_default_output);
-        self.ensure_timestamp_strategy_default();
-        if matches!(self.timestamp_strategy, TimestampStrategy::SasRules) {
-            self.refresh_timestamp_from_strategy();
-        }
+        PackerState::metadata_inputs_changed(self, previous_default_output);
         self.refresh_psu_toml_editor();
     }
 
-    fn ensure_timestamp_strategy_default(&mut self) {
-        if !matches!(self.timestamp_strategy, TimestampStrategy::None) {
-            return;
-        }
-
-        let recommended = if self.source_timestamp.is_some() {
-            Some(TimestampStrategy::InheritSource)
-        } else if self.planned_timestamp_for_current_source().is_some() {
-            Some(TimestampStrategy::SasRules)
-        } else {
-            Some(TimestampStrategy::Manual)
-        };
-
-        if let Some(strategy) = recommended {
-            self.set_timestamp_strategy(strategy);
+    pub(crate) fn confirm_pending_pack_action(&mut self) {
+        if let Some((folder, output_path, config)) = PackerState::confirm_pending_pack_action(self)
+        {
+            self.begin_pack_job(folder, output_path, config);
         }
     }
 
-    pub(crate) fn set_folder_name_from_full(&mut self, name: &str) {
-        let (prefix, remainder) = SasPrefix::split_from_name(name);
-        self.selected_prefix = prefix;
-        self.folder_base_name = remainder.to_string();
-    }
-
-    pub(crate) fn set_psu_file_base_from_full(&mut self, file_stem: &str) {
-        let (prefix, remainder) = SasPrefix::split_from_name(file_stem);
-        if prefix == SasPrefix::None || prefix == self.selected_prefix {
-            self.psu_file_base_name = remainder.to_string();
-        } else {
-            self.psu_file_base_name = file_stem.to_string();
-        }
+    pub(crate) fn format_missing_required_files_message(missing: &[MissingRequiredFile]) -> String {
+        PackerState::format_missing_required_files_message(missing)
     }
 
     pub(crate) fn selected_icon_flag_value(&self) -> Result<u16, String> {
@@ -877,24 +381,6 @@ impl PackerApp {
             self.icon_sys_state.flag_selection,
             self.icon_sys_state.custom_flag,
         )
-    }
-
-    pub(crate) fn missing_include_files(&self, folder: &Path) -> Vec<String> {
-        if self.include_files.is_empty() {
-            return Vec::new();
-        }
-
-        self.include_files
-            .iter()
-            .filter_map(|file| {
-                let candidate = folder.join(file);
-                if candidate.is_file() {
-                    None
-                } else {
-                    Some(file.clone())
-                }
-            })
-            .collect()
     }
 
     pub(crate) fn handle_pack_request(&mut self) {
@@ -1444,7 +930,7 @@ impl PackerApp {
         config: psu_packer::Config,
     ) {
         self.pending_pack_action = None;
-        self.start_pack_job(folder, output_path, config);
+        PackerState::start_pack_job(self, folder, output_path, config);
     }
 
     #[cfg(test)]
@@ -1456,7 +942,7 @@ impl PackerApp {
     ) {
         self.pending_pack_action = None;
         self.test_pack_job_started = true;
-        self.start_pack_job(folder, output_path, config);
+        PackerState::start_pack_job(self, folder, output_path, config);
     }
 
     pub(crate) fn start_pack_job(
@@ -1465,93 +951,11 @@ impl PackerApp {
         output_path: PathBuf,
         config: psu_packer::Config,
     ) {
-        if self.pack_job.is_some() {
-            return;
-        }
-
-        let progress = Arc::new(Mutex::new(PackProgress::InProgress));
-        let thread_progress = Arc::clone(&progress);
-
-        let handle = thread::spawn(move || {
-            let result =
-                psu_packer::pack_with_config(folder.as_path(), output_path.as_path(), config);
-
-            let outcome = match result {
-                Ok(_) => PackOutcome::Success {
-                    output_path: output_path.clone(),
-                },
-                Err(error) => PackOutcome::Error {
-                    folder: folder.clone(),
-                    output_path: output_path.clone(),
-                    error,
-                },
-            };
-
-            let mut guard = thread_progress
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            *guard = PackProgress::Finished(outcome);
-        });
-
-        self.status = "Packing…".to_string();
-        self.clear_error_message();
-        self.pack_job = Some(PackJob {
-            progress,
-            handle: Some(handle),
-        });
-    }
-
-    pub(crate) fn pack_progress_value(&self) -> Option<f32> {
-        let job = self.pack_job.as_ref()?;
-        let guard = job.progress.lock().ok()?;
-        Some(match &*guard {
-            PackProgress::InProgress => 0.0,
-            PackProgress::Finished(_) => 1.0,
-        })
+        PackerState::start_pack_job(self, folder, output_path, config);
     }
 
     pub(crate) fn poll_pack_job(&mut self) {
-        let Some(mut job) = self.pack_job.take() else {
-            return;
-        };
-
-        let outcome = match job.progress.lock() {
-            Ok(mut guard) => {
-                if let PackProgress::Finished(_) = &*guard {
-                    if let PackProgress::Finished(outcome) =
-                        std::mem::replace(&mut *guard, PackProgress::InProgress)
-                    {
-                        Some(outcome)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-            Err(poison) => {
-                let mut guard = poison.into_inner();
-                if let PackProgress::Finished(_) = &*guard {
-                    if let PackProgress::Finished(outcome) =
-                        std::mem::replace(&mut *guard, PackProgress::InProgress)
-                    {
-                        Some(outcome)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-        };
-
-        if let Some(outcome) = outcome {
-            if let Some(handle) = job.handle.take() {
-                let _ = handle.join();
-            }
-
-            self.temp_workspace = None;
-
+        if let Some(outcome) = PackerState::poll_pack_job(self) {
             match outcome {
                 PackOutcome::Success { output_path } => {
                     self.status = format!("Packed to {}", output_path.display());
@@ -1566,8 +970,6 @@ impl PackerApp {
                     self.set_error_message(message);
                 }
             }
-        } else {
-            self.pack_job = Some(job);
         }
     }
 

@@ -304,7 +304,11 @@ fn current_strategy_reason(
 }
 
 pub(crate) fn timestamp_rules_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
-    app.timestamp_rules_ui.ensure_matches(&app.timestamp_rules);
+    {
+        let state = &mut app.state;
+        let (ui_state, rules) = (&mut state.timestamp_rules_ui, &state.timestamp_rules);
+        ui_state.ensure_matches(rules);
+    }
 
     ui.heading(theme::display_heading_text(ui, "Automatic timestamp rules"));
     ui.small("Adjust deterministic timestamp spacing, category order, and aliases.");
