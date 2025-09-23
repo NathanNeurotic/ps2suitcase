@@ -35,21 +35,23 @@ NOTE: Requires Windows (uses SetFileTime via ctypes).
 import argparse
 import ctypes
 import csv
+import json
 import os
 import sys
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 # =========================
-# ===== USER CONFIG =======
+# ===== SHARED DATA =======
 # =========================
-# FAT-safe default spacing: 2 seconds (FAT mtime has 2-second granularity)
-# Keep these defaults in sync with `crates/psu-packer/src/sas.rs` (TimestampRules::default).
-DEFAULT_SECONDS_BETWEEN_ITEMS = 2
+_SCRIPT_ROOT = Path(__file__).resolve().parent
+_SHARED_DATA_PATH = _SCRIPT_ROOT / "crates" / "psu-packer" / "src" / "sas_data.json"
 
-# Big slot budget so each name gets a unique second within its category, even with many items.
-# 43,200 slots × 2 seconds = 86,400 seconds (exactly one day) per category. Nice for viewing in
-# a file browser as each category will land on its own day.
-DEFAULT_SLOTS_PER_CATEGORY   = 43_200
+with _SHARED_DATA_PATH.open("r", encoding="utf-8") as _shared_data_file:
+    SHARED_DATA = json.load(_shared_data_file)
+
+DEFAULT_SECONDS_BETWEEN_ITEMS = SHARED_DATA["defaults"]["seconds_between_items"]
+DEFAULT_SLOTS_PER_CATEGORY = SHARED_DATA["defaults"]["slots_per_category"]
 
 # Runtime-adjustable spacing settings (overridden by CLI options)
 SECONDS_BETWEEN_ITEMS = DEFAULT_SECONDS_BETWEEN_ITEMS
@@ -58,50 +60,12 @@ SLOTS_PER_CATEGORY = DEFAULT_SLOTS_PER_CATEGORY
 # Enable deterministic 0/1 second nudge (off by default; enabled via --stable-nudge)
 ENABLE_STABLE_NUDGE = False
 
-# Comma-separated lists of names (no prefixes) to be treated as if they belong to these categories.
-# Edit these to add your own folder names (case-insensitive). Whitespace is ignored.
-# Keep this alias map in sync with `psu_packer::sas::canonical_category_aliases()`.
-UNPREFIXED_IN_CATEGORY_CSV = {
-    "APP_":      "OSDXMB, XEBPLUS",
-    "APPS":      "",  # exact "APPS" is its own name
-    "PS1_":      "",
-    "EMU_":      "",
-    "GME_":      "",
-    "DST_":      "",
-    "DBG_":      "",
-    "RAA_":      "RESTART, POWEROFF",
-    "RTE_":      "NEUTRINO",
-    "SYS_":      "BOOT",
-    "ZZY_":      "EXPLOITS",
-    "ZZZ_":      "BM, MATRIXTEAM, OPL",
+CATEGORY_DEFS = SHARED_DATA["categories"]
+CATEGORY_ORDER = [entry["key"] for entry in CATEGORY_DEFS]
+UNPREFIXED_MAP = {
+    entry["key"]: {alias.upper() for alias in entry.get("aliases", [])}
+    for entry in CATEGORY_DEFS
 }
-
-# Category order (newest → oldest).
-CATEGORY_ORDER = [
-    "APP_",
-    "APPS",
-    "PS1_",
-    "EMU_",
-    "GME_",
-    "DST_",
-    "DBG_",
-    "RAA_",
-    "RTE_",
-    "DEFAULT",   # non-matching fallbacks
-    "SYS_",
-    "ZZY_",
-    "ZZZ_",
-]
-
-# =========================
-# ===== END CONFIG  =======
-# =========================
-
-# --- Build quick-lookup from CSV config ---
-def _parse_csv(s: str):
-    return {x.strip().upper() for x in s.split(",") if x.strip()} if s else set()
-
-UNPREFIXED_MAP = {k: _parse_csv(v) for k, v in UNPREFIXED_IN_CATEGORY_CSV.items()}
 
 # --- Windows FILETIME helpers (ctypes) ---
 _EPOCH_AS_FILETIME = 11644473600
@@ -168,7 +132,7 @@ def _set_times_windows(path: str, dt_utc: datetime) -> None:
         CloseHandle(handle)
 
 # --- Category + name → slot mapping ---
-CHARSET = tuple(" 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_-.")
+CHARSET = tuple(SHARED_DATA["charset"])
 CHAR_INDEX = {ch: i for i, ch in enumerate(CHARSET)}
 BASE = len(CHARSET)
 
@@ -176,19 +140,19 @@ CATEGORY_BLOCK_SECONDS = SLOTS_PER_CATEGORY * SECONDS_BETWEEN_ITEMS
 CATEGORY_INDEX = {name: idx for idx, name in enumerate(CATEGORY_ORDER)}
 
 def _effective_category_key(eff: str) -> str:
-    if eff.startswith("APP_"): return "APP_"
-    if eff == "APPS": return "APPS"
-    if eff.startswith("PS1_"): return "PS1_"
-    if eff.startswith("EMU_"): return "EMU_"
-    if eff.startswith("GME_"): return "GME_"
-    if eff.startswith("DST_"): return "DST_"
-    if eff.startswith("DBG_"): return "DBG_"
-    if eff.startswith("RAA_"): return "RAA_"
-    if eff.startswith("RTE_"): return "RTE_"
-    if eff.startswith("SYS_") or eff == "SYS": return "SYS_"
-    if eff.startswith("ZZY_"): return "ZZY_"
-    if eff.startswith("ZZZ_"): return "ZZZ_"
-    return "DEFAULT"
+    fallback = "DEFAULT"
+    for entry in CATEGORY_DEFS:
+        key = entry["key"]
+        if key == "DEFAULT":
+            fallback = key
+            continue
+        if key == "APPS":
+            if eff == key:
+                return key
+            continue
+        if eff.startswith(key):
+            return key
+    return fallback
 
 def _category_label_for_effective(eff: str) -> str:
     key = _effective_category_key(eff)
@@ -221,25 +185,17 @@ def _normalize_name_for_rules(name: str) -> str:
     n = name.strip().upper()
 
     # 1) User-configured "no-prefix" names
-    for cat_key, names in UNPREFIXED_MAP.items():
+    for entry in CATEGORY_DEFS:
+        key = entry["key"]
+        names = UNPREFIXED_MAP[key]
         if n in names:
-            return "APPS" if cat_key == "APPS" else f"{cat_key}{n}"
+            if key == "APPS":
+                return "APPS"
+            if key == "DEFAULT":
+                return n
+            return f"{key}{n}"
 
-    # 2) Built-in defaults
-    if n in ("OSDXMB", "XEBPLUS"):
-        return "APP_" + n
-    if n in ("RESTART", "POWEROFF"):
-        return "RAA_" + n
-    if n == "NEUTRINO":
-        return "RTE_" + n
-    if n == "BOOT":
-        return "SYS_BOOT"
-    if n == "EXPLOITS":
-        return "ZZY_EXPLOITS"
-    if n in ("BM", "MATRIXTEAM", "OPL"):
-        return "ZZZ_" + n
-
-    # 3) Otherwise, leave as-is
+    # Otherwise, leave as-is
     return n
 
 def _category_priority_index(effective: str) -> int:

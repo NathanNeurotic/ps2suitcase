@@ -3197,8 +3197,10 @@ dependencies = [
  "argh",
  "chrono",
  "colored",
+ "once_cell",
  "ps2-filetypes",
  "serde",
+ "serde_json",
  "tempfile",
  "toml 0.9.5",
 ]

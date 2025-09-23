@@ -4,89 +4,52 @@ use chrono::{
     DateTime, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone,
     Timelike, Utc,
 };
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use serde_json::from_str;
 
-#[derive(Clone, Copy)]
-pub struct CanonicalCategoryAliases {
-    pub key: &'static str,
-    pub aliases: &'static [&'static str],
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+struct SharedSasData {
+    charset: String,
+    defaults: SharedSasDefaults,
+    categories: Vec<SharedCategory>,
 }
 
-const CANONICAL_CATEGORY_ALIASES: &[CanonicalCategoryAliases] = &[
-    CanonicalCategoryAliases {
-        key: "APP_",
-        aliases: &["OSDXMB", "XEBPLUS"],
-    },
-    CanonicalCategoryAliases {
-        key: "APPS",
-        aliases: &[],
-    },
-    CanonicalCategoryAliases {
-        key: "PS1_",
-        aliases: &[],
-    },
-    CanonicalCategoryAliases {
-        key: "EMU_",
-        aliases: &[],
-    },
-    CanonicalCategoryAliases {
-        key: "GME_",
-        aliases: &[],
-    },
-    CanonicalCategoryAliases {
-        key: "DST_",
-        aliases: &[],
-    },
-    CanonicalCategoryAliases {
-        key: "DBG_",
-        aliases: &[],
-    },
-    CanonicalCategoryAliases {
-        key: "RAA_",
-        aliases: &["RESTART", "POWEROFF"],
-    },
-    CanonicalCategoryAliases {
-        key: "RTE_",
-        aliases: &["NEUTRINO"],
-    },
-    CanonicalCategoryAliases {
-        key: "DEFAULT",
-        aliases: &[],
-    },
-    CanonicalCategoryAliases {
-        key: "SYS_",
-        aliases: &["BOOT"],
-    },
-    CanonicalCategoryAliases {
-        key: "ZZY_",
-        aliases: &["EXPLOITS"],
-    },
-    CanonicalCategoryAliases {
-        key: "ZZZ_",
-        aliases: &["BM", "MATRIXTEAM", "OPL"],
-    },
-];
-
-pub fn canonical_category_aliases() -> &'static [CanonicalCategoryAliases] {
-    CANONICAL_CATEGORY_ALIASES
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+struct SharedSasDefaults {
+    seconds_between_items: u32,
+    slots_per_category: u32,
 }
 
-pub fn canonical_aliases_for_category(key: &str) -> &'static [&'static str] {
-    for group in CANONICAL_CATEGORY_ALIASES {
-        if group.key == key {
-            return group.aliases;
-        }
-    }
-    &[]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+struct SharedCategory {
+    key: String,
+    #[serde(default)]
+    aliases: Vec<String>,
+}
+
+static SHARED_SAS_DATA: Lazy<SharedSasData> =
+    Lazy::new(|| from_str(include_str!("sas_data.json")).expect("valid SAS shared data JSON"));
+
+fn shared_sas_data() -> &'static SharedSasData {
+    &SHARED_SAS_DATA
+}
+
+fn canonical_category_aliases() -> &'static [SharedCategory] {
+    &shared_sas_data().categories
 }
 
 fn is_supported_alias(key: &str, alias: &str) -> bool {
-    canonical_aliases_for_category(key)
+    canonical_category_aliases()
         .iter()
-        .any(|candidate| *candidate == alias)
+        .find(|group| group.key == key)
+        .map(|group| group.aliases.iter().any(|candidate| candidate == alias))
+        .unwrap_or(false)
 }
 
-const CHARSET: &str = " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_-.";
+fn charset() -> &'static str {
+    &shared_sas_data().charset
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TimestampRules {
@@ -106,35 +69,30 @@ pub struct CategoryRule {
 }
 
 impl CategoryRule {
-    fn new(key: &'static str) -> Self {
+    fn new(key: &str) -> Self {
         Self {
             key: key.to_string(),
             aliases: Vec::new(),
         }
     }
-
-    fn with_aliases(mut self, aliases: &'static [&'static str]) -> Self {
-        self.aliases = aliases.iter().map(|alias| alias.to_string()).collect();
-        self
-    }
 }
 
 impl TimestampRules {
-    const fn default_seconds_between_items() -> u32 {
-        2
+    fn default_seconds_between_items() -> u32 {
+        shared_sas_data().defaults.seconds_between_items
     }
 
-    const fn default_slots_per_category() -> u32 {
-        43_200
+    fn default_slots_per_category() -> u32 {
+        shared_sas_data().defaults.slots_per_category
     }
 
     fn default_categories() -> Vec<CategoryRule> {
         canonical_category_aliases()
             .iter()
             .map(|group| {
-                let mut category = CategoryRule::new(group.key);
+                let mut category = CategoryRule::new(&group.key);
                 if !group.aliases.is_empty() {
-                    category = category.with_aliases(group.aliases);
+                    category.aliases = group.aliases.clone();
                 }
                 category
             })
@@ -330,12 +288,13 @@ fn slot_index_within_category(effective: &str, rules: &TimestampRules) -> i64 {
 
     let mut total = 0.0f64;
     let mut scale = 1.0f64;
+    let charset = charset();
 
     for ch in payload.chars().take(128) {
-        scale *= CHARSET.len() as f64;
-        let index = match CHARSET.find(ch.to_ascii_uppercase()) {
+        scale *= charset.len() as f64;
+        let index = match charset.find(ch.to_ascii_uppercase()) {
             Some(idx) => idx + 1,
-            None => CHARSET.len(),
+            None => charset.len(),
         } as f64;
         total += index / scale;
     }
@@ -380,6 +339,7 @@ fn snap_even_second(dt: DateTime<Utc>) -> DateTime<Utc> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::to_string_pretty;
     use std::path::PathBuf;
 
     #[test]
@@ -477,5 +437,32 @@ mod tests {
             planned_timestamp_for_name(second_name, &rules).expect("second timestamp");
 
         assert!(second_timestamp > first_timestamp);
+    }
+
+    #[test]
+    fn shared_data_round_trip_matches_defaults() {
+        let shared = shared_sas_data();
+        let rules = TimestampRules::default();
+
+        assert_eq!(
+            shared.defaults.seconds_between_items,
+            rules.seconds_between_items
+        );
+        assert_eq!(shared.defaults.slots_per_category, rules.slots_per_category);
+
+        let categories_from_rules: Vec<SharedCategory> = rules
+            .categories
+            .iter()
+            .map(|category| SharedCategory {
+                key: category.key.clone(),
+                aliases: category.aliases.clone(),
+            })
+            .collect();
+
+        assert_eq!(shared.categories, categories_from_rules);
+
+        let json = to_string_pretty(shared).expect("serialize shared data");
+        let reparsed: SharedSasData = serde_json::from_str(&json).expect("reparse shared data");
+        assert_eq!(*shared, reparsed);
     }
 }
