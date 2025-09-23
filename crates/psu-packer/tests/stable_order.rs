@@ -2,12 +2,27 @@ use std::fs;
 use std::path::Path;
 
 use chrono::NaiveDate;
+use ps2_filetypes::{PSUEntryKind, PSU};
 use psu_packer::{pack_with_config, Config, IconSysConfig, IconSysFlags};
 use tempfile::tempdir;
 
 fn write_sample_files(dir: &Path) {
     fs::write(dir.join("B.DAT"), b"second").expect("write B.DAT");
     fs::write(dir.join("A.DAT"), b"first").expect("write A.DAT");
+}
+
+fn file_entry_names(archive: &PSU) -> Vec<String> {
+    archive
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            if matches!(entry.kind, PSUEntryKind::File) {
+                Some(entry.name.clone())
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 fn build_icon_config() -> IconSysConfig {
@@ -60,6 +75,21 @@ fn packing_same_directory_twice_is_stable() {
     let first_bytes = fs::read(&output_first).expect("read first output");
     let second_bytes = fs::read(&output_second).expect("read second output");
 
+    let first_archive = PSU::new(first_bytes.clone());
+    let second_archive = PSU::new(second_bytes.clone());
+
+    let first_names = file_entry_names(&first_archive);
+    let second_names = file_entry_names(&second_archive);
+
+    assert_eq!(
+        first_names, second_names,
+        "repeated runs should preserve entry ordering",
+    );
+    assert_eq!(
+        first_names,
+        vec!["A.DAT", "B.DAT", "icon.sys"],
+        "files should be ordered case-insensitively",
+    );
     assert_eq!(
         first_bytes, second_bytes,
         "packing should produce identical archives"

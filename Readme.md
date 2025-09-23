@@ -22,6 +22,7 @@ PS2Suitcase is a Rust toolchain for building, inspecting, and packaging PlayStat
 - Folder tree with hot-reloading via filesystem watchers and validation messages that point directly to problematic assets.
 - Wizards for generating ICON files and automatically applying metadata presets.
 - Optional regeneration of `icon.sys` from structured TOML, ensuring consistent headers inside each archive.
+- Deterministic packaging that sorts files case-insensitively so repeated runs produce identical entry ordering.
 - Ready-to-use templates located in `assets/templates/` for both configuration and metadata files.
 
 ## Build and run
