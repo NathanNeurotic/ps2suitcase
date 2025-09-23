@@ -2,7 +2,6 @@
 resolver = "2"
 members = [
     "crates/suitcase",
-    "crates/macros",
     "crates/ps2-filetypes",
     "crates/xtask-build-app",
     "crates/memcard",
