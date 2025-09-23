@@ -2259,15 +2259,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "malloc_buf"
 version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3881,7 +3872,6 @@ dependencies = [
  "egui_dock",
  "egui_extras",
  "image",
- "macros",
  "notify",
  "ps2-filetypes",
  "psu-packer",
