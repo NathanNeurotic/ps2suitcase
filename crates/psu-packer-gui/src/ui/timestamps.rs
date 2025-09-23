@@ -1,10 +1,8 @@
-use std::collections::HashSet;
-
 use chrono::{Local, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use eframe::egui;
 use egui_extras::DatePickerButton;
 
-use crate::{sas_timestamps, ui::theme, PackerApp, TimestampStrategy, TIMESTAMP_FORMAT};
+use crate::{ui::theme, PackerApp, TimestampStrategy, TIMESTAMP_FORMAT};
 
 pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui) {
     ui.vertical(|ui| {
@@ -332,7 +330,7 @@ pub(crate) fn timestamp_rules_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
         .spacing(egui::vec2(12.0, 6.0))
         .show(ui, |ui| {
             ui.label("Seconds between items");
-            let mut seconds = app.timestamp_rules.seconds_between_items.max(2);
+            let mut seconds = app.timestamp_rules_ui.seconds_between_items();
             if ui
                 .add(
                     egui::DragValue::new(&mut seconds)
@@ -340,22 +338,14 @@ pub(crate) fn timestamp_rules_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
                         .speed(1.0),
                 )
                 .changed()
+                && app.timestamp_rules_ui.set_seconds_between_items(seconds)
             {
-                let mut coerced = if seconds % 2 == 0 {
-                    seconds
-                } else {
-                    seconds + 1
-                };
-                coerced = coerced.clamp(2, 3600);
-                if app.timestamp_rules.seconds_between_items != coerced {
-                    app.timestamp_rules.seconds_between_items = coerced;
-                    app.mark_timestamp_rules_modified();
-                }
+                app.mark_timestamp_rules_modified();
             }
             ui.end_row();
 
             ui.label("Slots per category");
-            let mut slots = app.timestamp_rules.slots_per_category.max(1);
+            let mut slots = app.timestamp_rules_ui.slots_per_category();
             if ui
                 .add(
                     egui::DragValue::new(&mut slots)
@@ -363,8 +353,8 @@ pub(crate) fn timestamp_rules_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
                         .speed(10.0),
                 )
                 .changed()
+                && app.timestamp_rules_ui.set_slots_per_category(slots)
             {
-                app.timestamp_rules.slots_per_category = slots.max(1);
                 app.mark_timestamp_rules_modified();
             }
             ui.end_row();
@@ -379,18 +369,24 @@ pub(crate) fn timestamp_rules_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
     ui.add_space(6.0);
 
     let mut move_request: Option<(usize, MoveDirection)> = None;
-    let category_len = app.timestamp_rules.categories.len();
+    let category_len = app.timestamp_rules_ui.len();
 
     for index in 0..category_len {
-        let category = app.timestamp_rules.categories[index].clone();
-        let key = category.key.clone();
-        let alias_count = category.aliases.len();
+        let Some(category) = app.timestamp_rules_ui.category(index) else {
+            continue;
+        };
+        let key = category.key().to_string();
+        let alias_count = category.alias_count();
+        let available_aliases = category.available_aliases().to_vec();
+        let _ = category;
+
         let header_title = if alias_count == 1 {
             format!("{key} (1 alias)")
         } else {
             format!("{key} ({alias_count} aliases)")
         };
 
+        let mut aliases_changed = false;
         egui::CollapsingHeader::new(header_title)
             .id_source(format!("timestamp_category_{index}"))
             .show(ui, |ui| {
@@ -410,47 +406,45 @@ pub(crate) fn timestamp_rules_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
                 });
 
                 ui.label("Canonical aliases:");
-                let allowed_aliases = sas_timestamps::canonical_aliases_for_category(&key);
-                if allowed_aliases.is_empty() {
+                if available_aliases.is_empty() {
                     ui.small("No canonical aliases are defined for this category.");
                 } else {
-                    let mut selected: HashSet<String> =
-                        category.aliases.iter().cloned().collect();
-
-                    for alias in allowed_aliases {
-                        let mut is_selected = selected.contains(*alias);
-                        if ui.checkbox(&mut is_selected, *alias).changed() {
-                            if is_selected {
-                                selected.insert((*alias).to_string());
-                            } else {
-                                selected.remove(*alias);
+                    for alias in &available_aliases {
+                        let mut is_selected = app
+                            .timestamp_rules_ui
+                            .category(index)
+                            .map(|category| category.is_alias_selected(alias))
+                            .unwrap_or(false);
+                        if ui.checkbox(&mut is_selected, alias).changed() {
+                            if app
+                                .timestamp_rules_ui
+                                .set_alias_selected(index, alias, is_selected)
+                            {
+                                aliases_changed = true;
                             }
-
-                            let new_selection: Vec<String> = allowed_aliases
-                                .iter()
-                                .filter(|candidate| selected.contains(**candidate))
-                                .map(|candidate| (*candidate).to_string())
-                                .collect();
-                            app.set_timestamp_aliases(index, new_selection);
                         }
                     }
 
-                    if selected.is_empty() {
-                        let alias_list = allowed_aliases.join(", ");
-                        let warning = format!(
-                            "No aliases selected. Unprefixed names ({alias_list}) will fall back to DEFAULT scheduling.",
-                        );
+                    if let Some(warning) = app.timestamp_rules_ui.alias_warning(index) {
                         ui.colored_label(egui::Color32::from_rgb(229, 115, 115), warning);
                     }
                 }
             });
+
+        if aliases_changed {
+            app.mark_timestamp_rules_modified();
+        }
+
         ui.add_space(6.0);
     }
 
     if let Some((index, direction)) = move_request {
-        match direction {
-            MoveDirection::Up => app.move_timestamp_category_up(index),
-            MoveDirection::Down => app.move_timestamp_category_down(index),
+        let moved = match direction {
+            MoveDirection::Up => app.timestamp_rules_ui.move_category_up(index),
+            MoveDirection::Down => app.timestamp_rules_ui.move_category_down(index),
+        };
+        if moved {
+            app.mark_timestamp_rules_modified();
         }
     }
 
