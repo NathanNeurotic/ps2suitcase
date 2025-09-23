@@ -172,12 +172,13 @@ pub(crate) enum SasPrefix {
     Dbg,
     Raa,
     Rte,
+    Default,
     Sys,
     Zzy,
     Zzz,
 }
 
-pub(crate) const SAS_PREFIXES: [SasPrefix; 12] = [
+pub(crate) const SAS_PREFIXES: [SasPrefix; 13] = [
     SasPrefix::App,
     SasPrefix::Apps,
     SasPrefix::Ps1,
@@ -187,6 +188,7 @@ pub(crate) const SAS_PREFIXES: [SasPrefix; 12] = [
     SasPrefix::Dbg,
     SasPrefix::Raa,
     SasPrefix::Rte,
+    SasPrefix::Default,
     SasPrefix::Sys,
     SasPrefix::Zzy,
     SasPrefix::Zzz,
@@ -211,6 +213,7 @@ impl SasPrefix {
             SasPrefix::Dbg => "DBG_",
             SasPrefix::Raa => "RAA_",
             SasPrefix::Rte => "RTE_",
+            SasPrefix::Default => "DEFAULT",
             SasPrefix::Sys => "SYS_",
             SasPrefix::Zzy => "ZZY_",
             SasPrefix::Zzz => "ZZZ_",
@@ -220,19 +223,28 @@ impl SasPrefix {
     pub const fn label(self) -> &'static str {
         match self {
             SasPrefix::None => "(none)",
+            SasPrefix::Default => "DEFAULT",
             _ => self.as_str(),
         }
     }
 
-    pub(crate) fn iter_all() -> impl Iterator<Item = SasPrefix> {
-        std::iter::once(SasPrefix::None).chain(SAS_PREFIXES.iter().copied())
+    pub(crate) fn iter_prefixed() -> impl Iterator<Item = SasPrefix> {
+        SAS_PREFIXES.into_iter()
+    }
+
+    pub(crate) fn iter_with_unprefixed() -> impl Iterator<Item = SasPrefix> {
+        std::iter::once(SasPrefix::None).chain(Self::iter_prefixed())
     }
 
     pub(crate) fn split_from_name(name: &str) -> (SasPrefix, &str) {
         for prefix in SAS_PREFIXES {
-            let value = prefix.as_str();
-            if name.starts_with(value) {
-                let remainder = &name[value.len()..];
+            let remainder = match prefix {
+                SasPrefix::Default => name
+                    .strip_prefix("DEFAULT_")
+                    .or_else(|| name.strip_prefix(prefix.as_str())),
+                _ => name.strip_prefix(prefix.as_str()),
+            };
+            if let Some(remainder) = remainder {
                 return (prefix, remainder);
             }
         }
@@ -2069,6 +2081,18 @@ mod packer_app_tests {
     }
 
     #[test]
+    fn split_from_name_supports_default_prefix_variants() {
+        let (prefix, remainder) = SasPrefix::split_from_name("DEFAULT_SAVE");
+        assert_eq!(prefix, SasPrefix::Default);
+        assert_eq!(remainder, "SAVE");
+
+        let (prefix_no_separator, remainder_no_separator) =
+            SasPrefix::split_from_name("DEFAULTSAVE");
+        assert_eq!(prefix_no_separator, SasPrefix::Default);
+        assert_eq!(remainder_no_separator, "SAVE");
+    }
+
+    #[test]
     fn prepare_pack_inputs_sets_default_output_path() {
         let workspace = tempdir().expect("temp workspace");
         let project_dir = workspace.path().join("project");
@@ -2797,13 +2821,7 @@ impl eframe::App for PackerApp {
                     spacing.item_spacing.x = 12.0;
                     spacing.item_spacing.y = 8.0;
 
-                    self.editor_tab_button(
-                        ui,
-                        EditorTab::PsuSettings,
-                        "PSU Settings",
-                        false,
-                        &tab_font,
-                    );
+                    self.editor_tab_button(ui, EditorTab::PsuSettings, ".psu", false, &tab_font);
 
                     #[cfg(feature = "psu-toml-editor")]
                     {

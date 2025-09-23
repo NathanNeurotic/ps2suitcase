@@ -17,12 +17,12 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
             .num_columns(2)
             .spacing(egui::vec2(12.0, 6.0))
             .show(ui, |ui| {
-                ui.label("SAS prefix");
+                ui.label("PREFIX CATEGORY");
                 let prefix_changed = egui::ComboBox::from_id_source("metadata_prefix_combo")
                     .selected_text(app.selected_prefix.label())
                     .show_ui(ui, |ui| {
                         let mut changed = false;
-                        for prefix in SasPrefix::iter_all() {
+                        for prefix in SasPrefix::iter_with_unprefixed() {
                             let response = ui.selectable_value(
                                 &mut app.selected_prefix,
                                 prefix,
@@ -41,17 +41,41 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
                 }
                 ui.end_row();
 
-                ui.label("Folder name");
+                let folder_preview = app.folder_name();
+                ui.vertical(|ui| {
+                    ui.label("psuPaste Folder Name");
+                    let trimmed = folder_preview.trim();
+                    if trimmed.is_empty() {
+                        ui.small("Used when exporting to psuPaste folders.");
+                    } else {
+                        ui.small(format!("Creates folder: {folder_preview}"));
+                    }
+                });
                 if ui.text_edit_singleline(&mut app.folder_base_name).changed() {
                     metadata_changed = true;
                 }
                 ui.end_row();
 
-                ui.label("PSU filename");
-                if ui
-                    .text_edit_singleline(&mut app.psu_file_base_name)
-                    .changed()
-                {
+                let output_preview = app.default_output_file_name();
+                ui.vertical(|ui| {
+                    ui.label("PSU filename");
+                    match &output_preview {
+                        Some(file_name) => {
+                            ui.small(format!("Saves archive as: {file_name}"));
+                        }
+                        None => {
+                            ui.small("Base name updates the .psu archive.");
+                        }
+                    }
+                });
+                let psu_response = ui
+                    .horizontal(|ui| {
+                        let response = ui.text_edit_singleline(&mut app.psu_file_base_name);
+                        ui.monospace(".psu");
+                        response
+                    })
+                    .inner;
+                if psu_response.changed() {
                     metadata_changed = true;
                 }
                 ui.end_row();
