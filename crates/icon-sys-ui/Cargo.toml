@@ -1,0 +1,9 @@
+[package]
+name = "icon-sys-ui"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+egui = "0.31.1"
+psu-packer = { path = "../psu-packer" }

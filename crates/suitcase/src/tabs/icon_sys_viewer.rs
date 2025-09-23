@@ -1,80 +1,36 @@
 use crate::tabs::Tab;
 use crate::{AppState, VirtualFile};
 use eframe::egui;
-use eframe::egui::{
-    vec2, Color32, CornerRadius, Grid, Id, PopupCloseBehavior, Response, TextEdit, Ui,
+use eframe::egui::{CornerRadius, Grid, Id, PopupCloseBehavior, Response, Ui};
+use icon_sys_ui::{
+    background_editor, flag_selector, lighting_editor, preset_selector, title_editor,
+    BackgroundSectionState, FlagSectionState, IconFlagSelection, LightingSectionState,
+    PresetPreviewData, PresetSectionState, PresetSelection, TitleSectionIds, TitleSectionState,
 };
 use ps2_filetypes::color::Color;
 use ps2_filetypes::{ColorF, IconSys, Vector};
 use psu_packer::{
-    color_f_to_rgba, color_to_normalized_rgba, normalized_rgba_to_color, rgba_to_color_f,
+    shift_jis_byte_length, split_icon_sys_title, ColorConfig, ColorFConfig, IconSysPreset,
+    VectorConfig, ICON_SYS_FLAG_OPTIONS, ICON_SYS_PRESETS,
 };
 use relative_path::PathExt;
-use std::ops::Add;
 use std::path::PathBuf;
 
-#[derive(Copy, Clone)]
-pub struct PS2RgbaInterface {
-    pub rgb: [f32; 3],
-    pub alpha: f32,
-}
-
-impl PS2RgbaInterface {
-    pub fn build_from_color_f(color_f: ColorF) -> Self {
-        let rgba = color_f_to_rgba(color_f);
-        Self {
-            rgb: [rgba[0], rgba[1], rgba[2]],
-            alpha: rgba[3],
-        }
-    }
-    pub fn build_from_color(color: Color) -> Self {
-        let rgba = color_to_normalized_rgba(color);
-        Self {
-            rgb: [rgba[0], rgba[1], rgba[2]],
-            alpha: rgba[3],
-        }
-    }
-
-    pub fn to_color_f(&self) -> ColorF {
-        rgba_to_color_f([self.rgb[0], self.rgb[1], self.rgb[2], self.alpha])
-    }
-
-    pub fn to_color(&self) -> Color {
-        normalized_rgba_to_color([self.rgb[0], self.rgb[1], self.rgb[2], self.alpha])
-    }
-}
-
-impl From<PS2RgbaInterface> for Color32 {
-    fn from(value: PS2RgbaInterface) -> Self {
-        let color = value.to_color();
-        Color32::from_rgba_unmultiplied(color.r, color.g, color.b, color.a)
-    }
-}
-
-pub struct Light {
-    pub color: PS2RgbaInterface,
-    pub direction: Vector,
-}
-
-impl Light {
-    pub fn new(color: ColorF, direction: Vector) -> Self {
-        Self {
-            color: PS2RgbaInterface::build_from_color_f(color),
-            direction,
-        }
-    }
-}
-
 pub struct IconSysViewer {
-    title: String,
+    title_line1: String,
+    title_line2: String,
     file: String,
     pub icon_file: String,
     pub icon_copy_file: String,
     pub icon_delete_file: String,
+    pub flag_selection: IconFlagSelection,
+    pub custom_flag: u16,
     pub background_transparency: u32,
-    pub ambient_color: PS2RgbaInterface,
-    pub background_colors: [PS2RgbaInterface; 4],
-    pub lights: [Light; 3],
+    pub ambient_color: ColorFConfig,
+    pub background_colors: [ColorConfig; 4],
+    pub light_directions: [VectorConfig; 3],
+    pub light_colors: [ColorFConfig; 3],
+    pub selected_preset: Option<String>,
     pub sys: IconSys,
     pub file_path: PathBuf,
 }
@@ -84,25 +40,58 @@ impl IconSysViewer {
         let buf = std::fs::read(&file.file_path).expect("File not found");
 
         let sys = IconSys::new(buf);
+        let (title_line1, title_line2) =
+            split_icon_sys_title(&sys.title, sys.linebreak_pos as usize);
+
+        let (flag_selection, custom_flag) = resolve_flag_selection(sys.flags);
+
+        let background_colors = sys.background_colors.map(|color| ColorConfig {
+            r: color.r,
+            g: color.g,
+            b: color.b,
+            a: color.a,
+        });
+        let light_directions = sys.light_directions.map(|direction| VectorConfig {
+            x: direction.x,
+            y: direction.y,
+            z: direction.z,
+            w: direction.w,
+        });
+        let light_colors = sys.light_colors.map(|color| ColorFConfig {
+            r: color.r,
+            g: color.g,
+            b: color.b,
+            a: color.a,
+        });
+        let ambient_color = ColorFConfig {
+            r: sys.ambient_color.r,
+            g: sys.ambient_color.g,
+            b: sys.ambient_color.b,
+            a: sys.ambient_color.a,
+        };
+
+        let selected_preset = detect_preset(
+            sys.background_transparency,
+            &background_colors,
+            &light_directions,
+            &light_colors,
+            &ambient_color,
+        );
 
         Self {
-            title: sys.title.clone(),
+            title_line1,
+            title_line2,
             icon_file: sys.icon_file.clone(),
             icon_copy_file: sys.icon_copy_file.clone(),
             icon_delete_file: sys.icon_delete_file.clone(),
-            background_transparency: sys.background_transparency.clone(),
-            ambient_color: PS2RgbaInterface::build_from_color_f(sys.ambient_color),
-            background_colors: [
-                PS2RgbaInterface::build_from_color(sys.background_colors[0]),
-                PS2RgbaInterface::build_from_color(sys.background_colors[1]),
-                PS2RgbaInterface::build_from_color(sys.background_colors[2]),
-                PS2RgbaInterface::build_from_color(sys.background_colors[3]),
-            ],
-            lights: [
-                Light::new(sys.light_colors[0], sys.light_directions[0]),
-                Light::new(sys.light_colors[1], sys.light_directions[1]),
-                Light::new(sys.light_colors[2], sys.light_directions[2]),
-            ],
+            background_transparency: sys.background_transparency,
+            ambient_color,
+            background_colors,
+            light_directions,
+            light_colors,
+            flag_selection,
+            custom_flag,
+            selected_preset,
             sys,
             file_path: file.file_path.clone(),
             file: file
@@ -120,14 +109,12 @@ impl IconSysViewer {
             .filter_map(|file| {
                 let name = file.name.clone();
                 if matches!(
-                    PathBuf::from(&name)
+                    std::path::Path::new(&name)
                         .extension()
-                        .unwrap_or_default()
-                        .to_str()
-                        .unwrap_or(""),
-                    "icn" | "ico"
+                        .and_then(|ext| ext.to_str()),
+                    Some("icn") | Some("ico")
                 ) {
-                    Some(name.clone())
+                    Some(name)
                 } else {
                     None
                 }
@@ -135,15 +122,69 @@ impl IconSysViewer {
             .collect();
 
         ui.vertical(|ui| {
-            // eframe::egui::Grid::new(Id::from("IconSysEditor"))
-            //     .num_columns(2)
-            //     .show(ui, |ui| {
             ui.heading("Icon Configuration");
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.label("Title");
-                ui.add(TextEdit::singleline(&mut self.title));
+
+            ui.group(|ui| {
+                ui.heading("Title");
+                ui.small(
+                    "Each line supports up to 16 characters that must round-trip through Shift-JIS",
+                );
+                title_editor(
+                    ui,
+                    TitleSectionIds {
+                        line1: egui::Id::new("viewer_icon_sys_title_line1"),
+                        line2: egui::Id::new("viewer_icon_sys_title_line2"),
+                    },
+                    TitleSectionState {
+                        line1: &mut self.title_line1,
+                        line2: &mut self.title_line2,
+                    },
+                );
             });
+
+            ui.add_space(8.0);
+
+            ui.group(|ui| {
+                ui.heading("Flags");
+                flag_selector(
+                    ui,
+                    FlagSectionState {
+                        selection: &mut self.flag_selection,
+                        custom_flag: &mut self.custom_flag,
+                    },
+                );
+            });
+
+            ui.add_space(8.0);
+
+            ui.group(|ui| {
+                ui.heading("Presets");
+                ui.small("Choose a preset to populate the colors and lights automatically.");
+                let response = preset_selector(
+                    ui,
+                    PresetSectionState {
+                        selected_preset: &mut self.selected_preset,
+                    },
+                    PresetPreviewData {
+                        background_colors: &self.background_colors,
+                        light_colors: &self.light_colors,
+                        ambient_color: &self.ambient_color,
+                    },
+                );
+                if let Some(selection) = response.selection {
+                    match selection {
+                        PresetSelection::Manual => {
+                            self.selected_preset = None;
+                        }
+                        PresetSelection::Preset(preset) => {
+                            apply_preset(self, preset);
+                        }
+                    }
+                }
+            });
+
+            ui.add_space(8.0);
 
             ui.heading("Icons");
             ui.add_space(4.0);
@@ -159,87 +200,43 @@ impl IconSysViewer {
                 file_select(ui, "delete_icon", &mut self.icon_delete_file, &files);
             });
 
-            ui.heading("Background");
-            ui.add_space(4.0);
+            ui.add_space(8.0);
 
-            const SPACING: f32 = 40.0;
-
-            ui.add_sized(vec2(SPACING * 3.0, SPACING * 3.0), |ui: &mut Ui| {
-                draw_background(ui, &self.background_colors);
-                ui.spacing_mut().interact_size = vec2(SPACING, SPACING);
-                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-
-                ui.columns(3, |cols| {
-                    egui::widgets::color_picker::color_edit_button_rgb(
-                        &mut cols[0],
-                        &mut self.background_colors[0].rgb,
-                    );
-                    cols[1].add_space(SPACING);
-                    egui::widgets::color_picker::color_edit_button_rgb(
-                        &mut cols[2],
-                        &mut self.background_colors[1].rgb,
-                    );
-
-                    cols[0].add_space(SPACING);
-                    cols[1].add_space(SPACING);
-                    cols[2].add_space(SPACING);
-
-                    egui::widgets::color_picker::color_edit_button_rgb(
-                        &mut cols[0],
-                        &mut self.background_colors[2].rgb,
-                    );
-                    cols[1].add_space(SPACING);
-                    egui::widgets::color_picker::color_edit_button_rgb(
-                        &mut cols[2],
-                        &mut self.background_colors[3].rgb,
-                    );
-                });
-                ui.response()
+            ui.group(|ui| {
+                ui.heading("Background");
+                ui.small("Adjust the gradient colors and alpha layer.");
+                let response = background_editor(
+                    ui,
+                    BackgroundSectionState {
+                        transparency: &mut self.background_transparency,
+                        colors: &mut self.background_colors,
+                    },
+                );
+                if response.changed {
+                    self.selected_preset = None;
+                }
             });
 
-            Grid::new("background").num_columns(2).show(ui, |ui| {
-                ui.label("Background Transparency").on_hover_ui(|ui| {
-                    ui.label(
-                        "This is the opposite of opacity, so a value of 100 will make \
-                                the background completely transparent",
-                    );
-                });
-                ui.add(egui::Slider::new(
-                    &mut self.background_transparency,
-                    0..=100,
-                ));
-                ui.end_row();
-                ui.label("Ambient Color");
-                egui::widgets::color_picker::color_edit_button_rgb(ui, &mut self.ambient_color.rgb);
-                ui.end_row();
+            ui.add_space(8.0);
+
+            ui.group(|ui| {
+                ui.heading("Lighting");
+                ui.small("Tweak light directions, colors, and the ambient glow.");
+                let response = lighting_editor(
+                    ui,
+                    LightingSectionState {
+                        light_colors: &mut self.light_colors,
+                        light_directions: &mut self.light_directions,
+                        ambient_color: &mut self.ambient_color,
+                    },
+                );
+                if response.changed {
+                    self.selected_preset = None;
+                }
             });
 
-            ui.heading("Lights");
-            ui.add_space(4.0);
+            ui.add_space(8.0);
 
-            for (index, light) in self.lights.iter_mut().enumerate() {
-                let human_readable_index = index + 1;
-                ui.label(format!("Light {human_readable_index}"));
-                ui.end_row();
-                ui.label("Color");
-                egui::widgets::color_picker::color_edit_button_rgb(ui, &mut light.color.rgb);
-                ui.end_row();
-
-                ui.label("X");
-                ui.add(egui::Slider::new(&mut light.direction.x, -1.0..=1.0));
-                ui.end_row();
-                ui.label("Y");
-                ui.add(egui::Slider::new(&mut light.direction.y, -1.0..=1.0));
-                ui.end_row();
-                ui.label("Z");
-                ui.add(egui::Slider::new(&mut light.direction.z, -1.0..=1.0));
-                ui.end_row();
-
-                Ui::separator(ui);
-                ui.end_row();
-            }
-
-            // });
             ui.button("Save")
                 .on_hover_text("Save changes")
                 .clicked()
@@ -247,6 +244,29 @@ impl IconSysViewer {
                     self.save();
                 });
         });
+    }
+
+    fn build_icon_sys(&self) -> IconSys {
+        let flag_value =
+            icon_sys_ui::selected_icon_flag_value(self.flag_selection, self.custom_flag)
+                .unwrap_or(self.sys.flags);
+        let linebreak_pos = shift_jis_byte_length(&self.title_line1)
+            .map(|len| len as u16)
+            .unwrap_or(self.sys.linebreak_pos);
+        IconSys {
+            flags: flag_value,
+            linebreak_pos,
+            background_transparency: self.background_transparency,
+            background_colors: self.background_colors.map(Into::into),
+            light_directions: self.light_directions.map(Into::into),
+            light_colors: self.light_colors.map(Into::into),
+            ambient_color: self.ambient_color.into(),
+            title: format!("{}{}", self.title_line1, self.title_line2),
+            icon_file: self.icon_file.clone(),
+            icon_copy_file: self.icon_copy_file.clone(),
+            icon_delete_file: self.icon_delete_file.clone(),
+            ..self.sys.clone()
+        }
     }
 }
 
@@ -260,41 +280,71 @@ impl Tab for IconSysViewer {
     }
 
     fn get_modified(&self) -> bool {
-        self.sys.title != self.title
-            || self.sys.icon_file != self.icon_file
-            || self.sys.icon_copy_file != self.icon_copy_file
-            || self.sys.icon_delete_file != self.icon_delete_file
+        let rebuilt = self.build_icon_sys();
+        if self.sys.flags != rebuilt.flags
+            || self.sys.linebreak_pos != rebuilt.linebreak_pos
+            || self.sys.background_transparency != rebuilt.background_transparency
+            || self.sys.background_colors != rebuilt.background_colors
+            || self.sys.light_directions != rebuilt.light_directions
+            || self.sys.light_colors != rebuilt.light_colors
+            || self.sys.ambient_color != rebuilt.ambient_color
+            || self.sys.title != rebuilt.title
+            || self.sys.icon_file != rebuilt.icon_file
+            || self.sys.icon_copy_file != rebuilt.icon_copy_file
+            || self.sys.icon_delete_file != rebuilt.icon_delete_file
+        {
+            return true;
+        }
+        false
     }
 
     fn save(&mut self) {
-        let new_sys = IconSys {
-            title: self.title.clone(),
-            icon_file: self.icon_file.clone(),
-            icon_copy_file: self.icon_copy_file.clone(),
-            icon_delete_file: self.icon_delete_file.clone(),
-            background_transparency: self.background_transparency.clone(),
-            ambient_color: self.ambient_color.to_color_f(),
-            background_colors: [
-                self.background_colors[0].to_color(),
-                self.background_colors[1].to_color(),
-                self.background_colors[2].to_color(),
-                self.background_colors[3].to_color(),
-            ],
-            light_colors: [
-                self.lights[0].color.to_color_f(),
-                self.lights[1].color.to_color_f(),
-                self.lights[2].color.to_color_f(),
-            ],
-            light_directions: [
-                self.lights[0].direction,
-                self.lights[1].direction,
-                self.lights[2].direction,
-            ],
-            ..self.sys.clone()
-        };
+        let new_sys = self.build_icon_sys();
         std::fs::write(&self.file_path, new_sys.to_bytes().unwrap()).expect("Failed to save icon");
         self.sys = new_sys;
     }
+}
+
+fn resolve_flag_selection(flags: u16) -> (IconFlagSelection, u16) {
+    if let Some((index, _)) = ICON_SYS_FLAG_OPTIONS
+        .iter()
+        .enumerate()
+        .find(|(_, (value, _))| *value == flags)
+    {
+        (IconFlagSelection::Preset(index), flags)
+    } else {
+        (IconFlagSelection::Custom, flags)
+    }
+}
+
+fn detect_preset(
+    transparency: u32,
+    background_colors: &[ColorConfig; 4],
+    light_directions: &[VectorConfig; 3],
+    light_colors: &[ColorFConfig; 3],
+    ambient: &ColorFConfig,
+) -> Option<String> {
+    ICON_SYS_PRESETS.iter().find_map(|preset| {
+        if preset.background_transparency == transparency
+            && &preset.background_colors == background_colors
+            && &preset.light_directions == light_directions
+            && &preset.light_colors == light_colors
+            && &preset.ambient_color == ambient
+        {
+            Some(preset.id.to_string())
+        } else {
+            None
+        }
+    })
+}
+
+fn apply_preset(viewer: &mut IconSysViewer, preset: &IconSysPreset) {
+    viewer.background_transparency = preset.background_transparency;
+    viewer.background_colors = preset.background_colors;
+    viewer.light_directions = preset.light_directions;
+    viewer.light_colors = preset.light_colors;
+    viewer.ambient_color = preset.ambient_color;
+    viewer.selected_preset = Some(preset.id.to_string());
 }
 
 fn set_border_radius(ui: &mut Ui, radius: CornerRadius) {
@@ -338,7 +388,6 @@ fn file_select(ui: &mut Ui, name: impl Into<String>, value: &mut String, files: 
         response
     });
 
-    // Small hack to ensure the popup is positioned correctly
     let res = Response {
         rect: layout_response.response.rect,
         ..layout_response.inner
@@ -352,45 +401,6 @@ fn file_select(ui: &mut Ui, name: impl Into<String>, value: &mut String, files: 
             }
         });
     });
-}
-
-fn draw_background(ui: &mut Ui, colors: &[PS2RgbaInterface; 4]) {
-    let rect = ui.available_rect_before_wrap();
-    let painter = ui.painter_at(rect);
-
-    let top_left = rect.left_top();
-    let top_right = rect.right_top();
-    let bottom_left = rect.left_bottom();
-    let bottom_right = rect.right_bottom();
-
-    let mut mesh = egui::epaint::Mesh::default();
-
-    let i0 = mesh.vertices.len() as u32;
-    mesh.vertices.push(egui::epaint::Vertex {
-        pos: top_left,
-        uv: egui::epaint::WHITE_UV,
-        color: colors[0].into(),
-    });
-    mesh.vertices.push(egui::epaint::Vertex {
-        pos: top_right,
-        uv: egui::epaint::WHITE_UV,
-        color: colors[1].into(),
-    });
-    mesh.vertices.push(egui::epaint::Vertex {
-        pos: bottom_right,
-        uv: egui::epaint::WHITE_UV,
-        color: colors[3].into(),
-    });
-    mesh.vertices.push(egui::epaint::Vertex {
-        pos: bottom_left,
-        uv: egui::epaint::WHITE_UV,
-        color: colors[2].into(),
-    });
-
-    mesh.indices
-        .extend_from_slice(&[i0, i0 + 1, i0 + 2, i0, i0 + 2, i0 + 3]);
-
-    painter.add(egui::Shape::mesh(mesh));
 }
 
 #[cfg(test)]
@@ -473,9 +483,9 @@ mod tests {
 
         let mut viewer = IconSysViewer::new(&virtual_file, &app_state);
 
-        assert_eq!(viewer.lights[0].direction.x, light_direction.x);
-        assert_eq!(viewer.lights[0].direction.y, light_direction.y);
-        assert_eq!(viewer.lights[0].direction.z, light_direction.z);
+        assert_eq!(viewer.light_directions[0].x, light_direction.x);
+        assert_eq!(viewer.light_directions[0].y, light_direction.y);
+        assert_eq!(viewer.light_directions[0].z, light_direction.z);
 
         viewer.save();
 
@@ -494,7 +504,7 @@ mod tests {
 
         let icon_sys = IconSys {
             flags: 0,
-            linebreak_pos: 0,
+            linebreak_pos: IconSysConfig::default_linebreak_pos(),
             background_transparency: IconSysConfig::default_background_transparency(),
             background_colors: IconSysConfig::default_background_colors().map(Into::into),
             light_directions: IconSysConfig::default_light_directions().map(Into::into),
@@ -531,6 +541,6 @@ mod tests {
             viewer.background_transparency,
             icon_sys.background_transparency
         );
-        assert_eq!(viewer.ambient_color.to_color_f(), icon_sys.ambient_color);
+        assert_eq!(ColorF::from(viewer.ambient_color), icon_sys.ambient_color);
     }
 }
