@@ -13,7 +13,7 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
     ui.group(|ui| {
         ui.heading(theme::display_heading_text(ui, "Metadata"));
         ui.small("Edit PSU metadata before or after selecting a folder.");
-        let previous_default_output = app.default_output_file_name();
+        let previous_default_output = app.packer_state.default_output_file_name();
         let mut metadata_changed = false;
 
         egui::Grid::new("metadata_grid")
@@ -22,12 +22,12 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
             .show(ui, |ui| {
                 ui.label("PREFIX CATEGORY");
                 let prefix_changed = egui::ComboBox::from_id_source("metadata_prefix_combo")
-                    .selected_text(app.selected_prefix.label())
+                    .selected_text(app.packer_state.selected_prefix.label())
                     .show_ui(ui, |ui| {
                         let mut changed = false;
                         for prefix in SasPrefix::iter_with_unprefixed() {
                             let response = ui.selectable_value(
-                                &mut app.selected_prefix,
+                                &mut app.packer_state.selected_prefix,
                                 prefix,
                                 prefix.label(),
                             );
@@ -44,7 +44,7 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
                 }
                 ui.end_row();
 
-                let folder_preview = app.folder_name();
+                let folder_preview = app.packer_state.folder_name();
                 ui.vertical(|ui| {
                     ui.label("psuPaste Folder Name");
                     let trimmed = folder_preview.trim();
@@ -54,12 +54,15 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
                         ui.small(format!("Creates folder: {folder_preview}"));
                     }
                 });
-                if ui.text_edit_singleline(&mut app.folder_base_name).changed() {
+                if ui
+                    .text_edit_singleline(&mut app.packer_state.folder_base_name)
+                    .changed()
+                {
                     metadata_changed = true;
                 }
                 ui.end_row();
 
-                let output_preview = app.default_output_file_name();
+                let output_preview = app.packer_state.default_output_file_name();
                 ui.vertical(|ui| {
                     ui.label("PSU filename");
                     match &output_preview {
@@ -73,7 +76,8 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
                 });
                 let psu_response = ui
                     .horizontal(|ui| {
-                        let response = ui.text_edit_singleline(&mut app.psu_file_base_name);
+                        let response =
+                            ui.text_edit_singleline(&mut app.packer_state.psu_file_base_name);
                         ui.monospace(".psu");
                         response
                     })
@@ -105,7 +109,7 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
         }
 
         #[cfg(feature = "psu-toml-editor")]
-        if app.folder.is_some() && app.psu_toml_sync_blocked {
+        if app.packer_state.folder.is_some() && app.psu_toml_sync_blocked {
             ui.add_space(6.0);
             ui.colored_label(
                 egui::Color32::YELLOW,
@@ -120,13 +124,13 @@ pub(crate) fn file_filters_section(app: &mut PackerApp, ui: &mut egui::Ui) {
     ui.group(|ui| {
         ui.heading(theme::display_heading_text(ui, "File filters"));
         ui.small("Manage which files to include or exclude before creating the archive.");
-        let folder_selected = app.folder.is_some();
+        let folder_selected = app.packer_state.folder.is_some();
         if !folder_selected {
             ui.small("No folder selected. Enter file names manually or choose a folder to browse.");
         }
         ui.columns(2, |columns| {
             let include_actions = {
-                let state = &mut app.state;
+                let state = app.packer_state_mut();
                 file_list_ui(
                     &mut columns[0],
                     ListKind::Include.label(),
@@ -149,7 +153,7 @@ pub(crate) fn file_filters_section(app: &mut PackerApp, ui: &mut egui::Ui) {
             }
 
             let exclude_actions = {
-                let state = &mut app.state;
+                let state = app.packer_state_mut();
                 file_list_ui(
                     &mut columns[1],
                     ListKind::Exclude.label(),
@@ -184,7 +188,7 @@ pub(crate) fn output_section(app: &mut PackerApp, ui: &mut egui::Ui) {
             .spacing(egui::vec2(12.0, 6.0))
             .show(ui, |ui| {
                 ui.label("Packed PSU path");
-                let trimmed_output = app.output.trim();
+                let trimmed_output = app.packer_state.output.trim();
                 if trimmed_output.is_empty() {
                     ui.weak("No destination selected");
                 } else {
@@ -211,10 +215,11 @@ pub(crate) fn packaging_section(app: &mut PackerApp, ui: &mut egui::Ui) {
         ui.heading(theme::display_heading_text(ui, "Packaging"));
         ui.small("Validate the configuration and generate the PSU archive.");
         let pack_in_progress = app.is_pack_running();
-        let missing_requirements = !app.missing_required_project_files.is_empty();
+        let missing_requirements = !app.packer_state.missing_required_project_files.is_empty();
         let missing_summary = if missing_requirements {
             Some(
-                app.missing_required_project_files
+                app.packer_state
+                    .missing_required_project_files
                     .iter()
                     .map(|entry| entry.name.as_str())
                     .collect::<Vec<_>>()
@@ -223,7 +228,7 @@ pub(crate) fn packaging_section(app: &mut PackerApp, ui: &mut egui::Ui) {
         } else {
             None
         };
-        let requirement_statuses = app.project_requirement_statuses();
+        let requirement_statuses = app.packer_state.project_requirement_statuses();
         let required_asset_list = REQUIRED_PROJECT_FILES.join(", ");
 
         if let Some(ref statuses) = requirement_statuses {
@@ -322,11 +327,11 @@ pub(crate) fn packaging_section(app: &mut PackerApp, ui: &mut egui::Ui) {
             ui.label("Packing in progress…");
         }
 
-        if let Some(error) = &app.error_message {
+        if let Some(error) = &app.packer_state.error_message {
             ui.colored_label(egui::Color32::RED, error);
         }
-        if !app.status.is_empty() {
-            ui.label(&app.status);
+        if !app.packer_state.status.is_empty() {
+            ui.label(&app.packer_state.status);
         }
     });
 }
@@ -356,18 +361,18 @@ mod tests {
     #[test]
     fn config_from_state_appends_psu_toml_once() {
         let mut app = PackerApp::default();
-        app.folder_base_name = "SAVE".to_string();
-        app.psu_file_base_name = "SAVE".to_string();
-        app.selected_prefix = SasPrefix::App;
+        app.packer_state.folder_base_name = "SAVE".to_string();
+        app.packer_state.psu_file_base_name = "SAVE".to_string();
+        app.packer_state.selected_prefix = SasPrefix::App;
 
         let config = app.config_from_state().expect("configuration should build");
         assert_eq!(config.exclude, Some(vec!["psu.toml".to_string()]));
         assert!(
-            app.exclude_files.is_empty(),
+            app.packer_state.exclude_files.is_empty(),
             "building the configuration should not modify the exclude list"
         );
 
-        app.exclude_files = vec!["DATA.BIN".to_string()];
+        app.packer_state.exclude_files = vec!["DATA.BIN".to_string()];
         let config_with_manual_entry = app
             .config_from_state()
             .expect("configuration should include manual exclude");
@@ -376,7 +381,7 @@ mod tests {
             Some(vec!["DATA.BIN".to_string(), "psu.toml".to_string()])
         );
 
-        app.exclude_files = vec!["psu.toml".to_string()];
+        app.packer_state.exclude_files = vec!["psu.toml".to_string()];
         let config_with_duplicate = app
             .config_from_state()
             .expect("configuration should handle duplicate entries");
@@ -389,15 +394,15 @@ mod tests {
     #[test]
     fn build_config_uses_loaded_psu_edits() {
         let mut app = PackerApp::default();
-        app.loaded_psu_path = Some(PathBuf::from("input.psu"));
-        app.selected_prefix = SasPrefix::Emu;
-        app.folder_base_name = "SAVE".to_string();
+        app.packer_state.loaded_psu_path = Some(PathBuf::from("input.psu"));
+        app.packer_state.selected_prefix = SasPrefix::Emu;
+        app.packer_state.folder_base_name = "SAVE".to_string();
         let timestamp = NaiveDate::from_ymd_opt(2023, 11, 14)
             .and_then(|date| date.and_hms_opt(12, 34, 56))
             .expect("valid timestamp");
-        app.timestamp = Some(timestamp);
-        app.include_files.push("FILE.BIN".to_string());
-        app.exclude_files.push("SKIP.DAT".to_string());
+        app.packer_state.timestamp = Some(timestamp);
+        app.packer_state.include_files.push("FILE.BIN".to_string());
+        app.packer_state.exclude_files.push("SKIP.DAT".to_string());
 
         let config = app.build_config().expect("config builds successfully");
         assert_eq!(config.name, "EMU_SAVE");
@@ -412,8 +417,8 @@ mod tests {
     #[test]
     fn manual_filter_entries_allowed_without_folder() {
         let mut app = PackerApp::default();
-        app.selected_prefix = SasPrefix::App;
-        app.folder_base_name = "SAVE".to_string();
+        app.packer_state.selected_prefix = SasPrefix::App;
+        app.packer_state.folder_base_name = "SAVE".to_string();
 
         assert!(app.handle_add_file_from_entry(ListKind::Include, "BOOT.ELF"));
         assert!(app.handle_add_file_from_entry(ListKind::Exclude, "THUMBS.DB"));
@@ -431,19 +436,19 @@ mod tests {
         let mut app = PackerApp::default();
 
         assert!(app.handle_add_file_from_entry(ListKind::Include, "  DATA.BIN  "));
-        assert_eq!(app.include_files, vec!["DATA.BIN"]);
+        assert_eq!(app.packer_state.include_files, vec!["DATA.BIN"]);
 
         assert!(!app.handle_add_file_from_entry(ListKind::Include, "DATA.BIN"));
-        assert_eq!(app.include_files, vec!["DATA.BIN"]);
-        assert!(app.error_message.is_some());
+        assert_eq!(app.packer_state.include_files, vec!["DATA.BIN"]);
+        assert!(app.packer_state.error_message.is_some());
     }
 
     #[test]
     fn config_from_state_uses_shift_jis_byte_linebreaks() {
         let mut app = PackerApp::default();
-        app.selected_prefix = SasPrefix::App;
-        app.folder_base_name = "SAVE".to_string();
-        app.psu_file_base_name = "SAVE".to_string();
+        app.packer_state.selected_prefix = SasPrefix::App;
+        app.packer_state.folder_base_name = "SAVE".to_string();
+        app.packer_state.psu_file_base_name = "SAVE".to_string();
         app.icon_sys_enabled = true;
         app.icon_sys_use_existing = false;
         app.icon_sys_title_line1 = "メモ".to_string();
@@ -550,12 +555,12 @@ impl PackerApp {
     pub(crate) fn browse_output_destination(&mut self) -> bool {
         let mut dialog = rfd::FileDialog::new().add_filter("PSU", &["psu"]);
 
-        let trimmed_output = self.output.trim();
+        let trimmed_output = self.packer_state.output.trim();
         if trimmed_output.is_empty() {
-            if let Some(default_dir) = self.default_output_directory(None) {
+            if let Some(default_dir) = self.packer_state.default_output_directory(None) {
                 dialog = dialog.set_directory(default_dir);
             }
-            if let Some(default_name) = self.default_output_file_name() {
+            if let Some(default_name) = self.packer_state.default_output_file_name() {
                 dialog = dialog.set_file_name(&default_name);
             }
         } else {
@@ -563,16 +568,16 @@ impl PackerApp {
             if let Some(parent) = current_path.parent() {
                 if !parent.as_os_str().is_empty() {
                     dialog = dialog.set_directory(parent);
-                } else if let Some(default_dir) = self.default_output_directory(None) {
+                } else if let Some(default_dir) = self.packer_state.default_output_directory(None) {
                     dialog = dialog.set_directory(default_dir);
                 }
-            } else if let Some(default_dir) = self.default_output_directory(None) {
+            } else if let Some(default_dir) = self.packer_state.default_output_directory(None) {
                 dialog = dialog.set_directory(default_dir);
             }
 
             if let Some(existing_name) = current_path.file_name().and_then(|name| name.to_str()) {
                 dialog = dialog.set_file_name(existing_name);
-            } else if let Some(default_name) = self.default_output_file_name() {
+            } else if let Some(default_name) = self.packer_state.default_output_file_name() {
                 dialog = dialog.set_file_name(&default_name);
             }
         }
@@ -588,7 +593,7 @@ impl PackerApp {
                 file.set_extension("psu");
             }
 
-            self.output = file.display().to_string();
+            self.packer_state.output = file.display().to_string();
             true
         } else {
             false
@@ -596,13 +601,13 @@ impl PackerApp {
     }
 
     pub(crate) fn ensure_output_destination_selected(&mut self) -> bool {
-        if self.output.trim().is_empty() {
-            if let Some(path) = self.default_output_path() {
-                self.output = path.display().to_string();
+        if self.packer_state.output.trim().is_empty() {
+            if let Some(path) = self.packer_state.default_output_path() {
+                self.packer_state.output = path.display().to_string();
             }
         }
 
-        if self.output.trim().is_empty() {
+        if self.packer_state.output.trim().is_empty() {
             return self.browse_output_destination();
         }
 
@@ -629,7 +634,7 @@ impl PackerApp {
                 format!("Configuration error: {message}")
             }
             psu_packer::Error::IOError(io_err) => {
-                let missing_files = self.missing_include_files(folder);
+                let missing_files = self.packer_state.missing_include_files(folder);
                 if !missing_files.is_empty() {
                     let formatted = missing_files
                         .into_iter()
@@ -665,7 +670,7 @@ impl PackerApp {
     }
 
     pub(crate) fn handle_add_file(&mut self, kind: ListKind) -> bool {
-        let Some(folder) = self.folder.clone() else {
+        let Some(folder) = self.packer_state.folder.clone() else {
             return false;
         };
 
@@ -717,7 +722,7 @@ impl PackerApp {
         if invalid_entries.is_empty() {
             if added_any {
                 self.clear_error_message();
-                self.status.clear();
+                self.packer_state.status.clear();
             }
         } else {
             let message = format!("Some files could not be added to the {list_label} list");
@@ -732,7 +737,7 @@ impl PackerApp {
         match self.add_file_entry(kind, entry) {
             Ok(_) => {
                 self.clear_error_message();
-                self.status.clear();
+                self.packer_state.status.clear();
                 true
             }
             Err(err) => {
@@ -761,7 +766,7 @@ impl PackerApp {
     }
 
     fn list_mut(&mut self, kind: ListKind) -> (&mut Vec<String>, &mut Option<usize>) {
-        let state = &mut self.state;
+        let state = &mut self.packer_state;
         match kind {
             ListKind::Include => (&mut state.include_files, &mut state.selected_include),
             ListKind::Exclude => (&mut state.exclude_files, &mut state.selected_exclude),
@@ -825,13 +830,13 @@ impl PackerApp {
     }
 
     fn config_from_state(&self) -> Result<psu_packer::Config, String> {
-        let include = if self.include_files.is_empty() {
+        let include = if self.packer_state.include_files.is_empty() {
             None
         } else {
-            Some(self.include_files.clone())
+            Some(self.packer_state.include_files.clone())
         };
 
-        let mut exclude = self.exclude_files.clone();
+        let mut exclude = self.packer_state.exclude_files.clone();
         if !exclude.iter().any(|entry| entry == "psu.toml") {
             exclude.push("psu.toml".to_string());
         }
@@ -861,15 +866,15 @@ impl PackerApp {
             None
         };
 
-        if self.folder_base_name.trim().is_empty() {
+        if self.packer_state.folder_base_name.trim().is_empty() {
             return Err("PSU name cannot be empty".to_string());
         }
 
-        let name = self.folder_name();
+        let name = self.packer_state.folder_name();
 
         Ok(psu_packer::Config {
             name,
-            timestamp: self.timestamp,
+            timestamp: self.packer_state.timestamp,
             include,
             exclude,
             icon_sys,
@@ -878,7 +883,7 @@ impl PackerApp {
 
     #[cfg(feature = "psu-toml-editor")]
     pub(crate) fn refresh_psu_toml_editor(&mut self) {
-        if self.folder.is_none() {
+        if self.packer_state.folder.is_none() {
             self.psu_toml_sync_blocked = false;
             return;
         }

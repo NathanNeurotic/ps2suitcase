@@ -125,7 +125,7 @@ mod tests {
     #[test]
     fn file_menu_buttons_enabled_without_folder() {
         let mut app = PackerApp::default();
-        assert!(app.folder.is_none());
+        assert!(app.packer_state.folder.is_none());
 
         let ctx = egui::Context::default();
         let mut recorder = RecordingMenuRecorder::default();
@@ -209,9 +209,9 @@ pub(crate) fn folder_section(app: &mut PackerApp, ui: &mut egui::Ui) {
             }
         });
 
-        if let Some(folder) = &app.folder {
+        if let Some(folder) = &app.packer_state.folder {
             ui.label(format!("Folder: {}", folder.display()));
-            if let Some(statuses) = app.project_requirement_statuses() {
+            if let Some(statuses) = app.packer_state.project_requirement_statuses() {
                 ui.add_space(4.0);
                 ui.small("Required project asset checklist:");
                 project_requirements_checklist(ui, &statuses);
@@ -224,16 +224,16 @@ pub(crate) fn loaded_psu_section(app: &PackerApp, ui: &mut egui::Ui) {
     ui.group(|ui| {
         ui.heading(theme::display_heading_text(ui, "Loaded PSU"));
         ui.small("Review the files discovered in the opened PSU archive.");
-        if let Some(path) = &app.loaded_psu_path {
+        if let Some(path) = &app.packer_state.loaded_psu_path {
             ui.label(format!("File: {}", path.display()));
         }
         egui::ScrollArea::vertical()
             .max_height(150.0)
             .show(ui, |ui| {
-                if app.loaded_psu_files.is_empty() {
+                if app.packer_state.loaded_psu_files.is_empty() {
                     ui.label("The archive does not contain any files.");
                 } else {
-                    for file in &app.loaded_psu_files {
+                    for file in &app.packer_state.loaded_psu_files {
                         ui.label(file);
                     }
                 }
@@ -242,7 +242,7 @@ pub(crate) fn loaded_psu_section(app: &PackerApp, ui: &mut egui::Ui) {
 }
 
 pub(crate) fn load_project_files(app: &mut PackerApp, folder: &Path) {
-    app.load_timestamp_rules_from_folder(folder);
+    app.packer_state.load_timestamp_rules_from_folder(folder);
     match psu_packer::load_config(folder) {
         Ok(config) => {
             let psu_packer::Config {
@@ -254,19 +254,19 @@ pub(crate) fn load_project_files(app: &mut PackerApp, folder: &Path) {
             } = config;
 
             app.set_folder_name_from_full(&name);
-            app.psu_file_base_name = app.folder_base_name.clone();
-            if let Some(default_path) = app.default_output_path_with(Some(folder)) {
-                app.output = default_path.display().to_string();
+            app.packer_state.psu_file_base_name = app.packer_state.folder_base_name.clone();
+            if let Some(default_path) = app.packer_state.default_output_path_with(Some(folder)) {
+                app.packer_state.output = default_path.display().to_string();
             } else {
-                app.output.clear();
+                app.packer_state.output.clear();
             }
-            app.source_timestamp = timestamp;
-            app.include_files = include.unwrap_or_default();
-            app.exclude_files = exclude.unwrap_or_default();
-            app.selected_include = None;
-            app.selected_exclude = None;
+            app.packer_state.source_timestamp = timestamp;
+            app.packer_state.include_files = include.unwrap_or_default();
+            app.packer_state.exclude_files = exclude.unwrap_or_default();
+            app.packer_state.selected_include = None;
+            app.packer_state.selected_exclude = None;
             app.clear_error_message();
-            app.status.clear();
+            app.packer_state.status.clear();
 
             let mut parsed_icon_sys = None;
             if let Some(icon_sys_path) = find_icon_sys_path(folder) {
@@ -303,25 +303,25 @@ pub(crate) fn load_project_files(app: &mut PackerApp, folder: &Path) {
         Err(err) => {
             let message = format_load_error(folder, err);
             app.set_error_message(message);
-            app.output.clear();
-            app.selected_prefix = SasPrefix::default();
-            app.folder_base_name.clear();
-            app.psu_file_base_name.clear();
-            app.timestamp = None;
-            app.timestamp_strategy = TimestampStrategy::None;
-            app.timestamp_from_rules = false;
-            app.source_timestamp = None;
-            app.manual_timestamp = None;
-            app.include_files.clear();
-            app.exclude_files.clear();
-            app.selected_include = None;
-            app.selected_exclude = None;
+            app.packer_state.output.clear();
+            app.packer_state.selected_prefix = SasPrefix::default();
+            app.packer_state.folder_base_name.clear();
+            app.packer_state.psu_file_base_name.clear();
+            app.packer_state.timestamp = None;
+            app.packer_state.timestamp_strategy = TimestampStrategy::None;
+            app.packer_state.timestamp_from_rules = false;
+            app.packer_state.source_timestamp = None;
+            app.packer_state.manual_timestamp = None;
+            app.packer_state.include_files.clear();
+            app.packer_state.exclude_files.clear();
+            app.packer_state.selected_include = None;
+            app.packer_state.selected_exclude = None;
             app.reset_icon_sys_fields();
         }
     }
-    app.loaded_psu_path = None;
-    app.loaded_psu_files.clear();
-    app.folder = Some(folder.to_path_buf());
+    app.packer_state.loaded_psu_path = None;
+    app.packer_state.loaded_psu_files.clear();
+    app.packer_state.folder = Some(folder.to_path_buf());
     app.sync_timestamp_after_source_update();
     app.reload_project_files();
 }
@@ -413,20 +413,20 @@ impl PackerApp {
         if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
             self.set_psu_file_base_from_full(stem);
         } else {
-            self.psu_file_base_name = self.folder_base_name.clone();
+            self.packer_state.psu_file_base_name = self.packer_state.folder_base_name.clone();
         }
-        self.source_timestamp = root_timestamp;
-        self.loaded_psu_files = files;
-        self.loaded_psu_path = Some(path.clone());
+        self.packer_state.source_timestamp = root_timestamp;
+        self.packer_state.loaded_psu_files = files;
+        self.packer_state.loaded_psu_path = Some(path.clone());
         self.clear_error_message();
-        self.status = format!("Loaded PSU from {}", path.display());
-        self.folder = None;
-        self.missing_required_project_files.clear();
+        self.packer_state.status = format!("Loaded PSU from {}", path.display());
+        self.packer_state.folder = None;
+        self.packer_state.missing_required_project_files.clear();
         self.sync_timestamp_after_source_update();
-        self.include_files.clear();
-        self.exclude_files.clear();
-        self.selected_include = None;
-        self.selected_exclude = None;
+        self.packer_state.include_files.clear();
+        self.packer_state.exclude_files.clear();
+        self.packer_state.selected_include = None;
+        self.packer_state.selected_exclude = None;
         let decode_text = |bytes: Vec<u8>| match String::from_utf8(bytes) {
             Ok(content) => content,
             Err(err) => {
@@ -469,8 +469,8 @@ impl PackerApp {
         }
         self.open_psu_settings_tab();
 
-        if self.output.trim().is_empty() {
-            self.output = path.display().to_string();
+        if self.packer_state.output.trim().is_empty() {
+            self.packer_state.output = path.display().to_string();
         }
     }
 }

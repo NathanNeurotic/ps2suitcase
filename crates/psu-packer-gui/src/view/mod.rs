@@ -32,12 +32,12 @@ impl eframe::App for PackerApp {
         ctx.set_pixels_per_point(self.zoom_factor);
 
         let source_present = self.has_source();
-        if !source_present && self.source_present_last_frame {
+        if !source_present && self.packer_state.source_present_last_frame {
             self.reset_metadata_fields();
         }
-        self.source_present_last_frame = source_present;
+        self.packer_state.source_present_last_frame = source_present;
 
-        if let Some(progress) = self.pack_progress_value() {
+        if let Some(progress) = self.packer_state.pack_progress_value() {
             ctx.request_repaint();
             egui::Window::new("packing_progress")
                 .title_bar(false)
@@ -156,7 +156,7 @@ impl eframe::App for PackerApp {
 
                     self.editor_tab_button(ui, EditorTab::IconSys, "icon.sys", false, &tab_font);
 
-                    let timestamp_label = if self.timestamp_rules_modified {
+                    let timestamp_label = if self.packer_state.timestamp_rules_modified {
                         "Timestamp rules*"
                     } else {
                         "Timestamp rules"
@@ -165,7 +165,7 @@ impl eframe::App for PackerApp {
                         ui,
                         EditorTab::TimestampAuto,
                         timestamp_label,
-                        self.timestamp_rules_modified,
+                        self.packer_state.timestamp_rules_modified,
                         &tab_font,
                     );
                 });
@@ -230,7 +230,7 @@ impl eframe::App for PackerApp {
                     #[cfg(feature = "psu-toml-editor")]
                     EditorTab::PsuToml => {
                         let editing_enabled = true; // Allow editing even without a source selection.
-                        let save_enabled = self.folder.is_some();
+                        let save_enabled = self.packer_state.folder.is_some();
                         let actions = state::text_editor_ui(
                             ui,
                             "psu.toml",
@@ -239,14 +239,14 @@ impl eframe::App for PackerApp {
                             &mut self.psu_toml_editor,
                         );
                         if actions.save_clicked {
-                            let folder = self.folder.as_deref();
+                            let folder = self.packer_state.folder.as_deref();
                             match state::save_editor_to_disk(
                                 folder,
                                 "psu.toml",
                                 &mut self.psu_toml_editor,
                             ) {
                                 Ok(path) => {
-                                    self.status = format!("Saved {}", path.display());
+                                    self.packer_state.status = format!("Saved {}", path.display());
                                     self.clear_error_message();
                                 }
                                 Err(err) => {
@@ -262,7 +262,7 @@ impl eframe::App for PackerApp {
                     }
                     EditorTab::TitleCfg => {
                         let editing_enabled = true; // Allow editing even without a source selection.
-                        let save_enabled = self.folder.is_some();
+                        let save_enabled = self.packer_state.folder.is_some();
                         let actions = state::title_cfg_form_ui(
                             ui,
                             editing_enabled,
@@ -270,14 +270,14 @@ impl eframe::App for PackerApp {
                             &mut self.title_cfg_editor,
                         );
                         if actions.save_clicked {
-                            let folder = self.folder.clone();
+                            let folder = self.packer_state.folder.clone();
                             match state::save_editor_to_disk(
                                 folder.as_deref(),
                                 "title.cfg",
                                 &mut self.title_cfg_editor,
                             ) {
                                 Ok(path) => {
-                                    self.status = format!("Saved {}", path.display());
+                                    self.packer_state.status = format!("Saved {}", path.display());
                                     self.clear_error_message();
                                 }
                                 Err(err) => {
@@ -317,14 +317,14 @@ impl eframe::App for PackerApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::TIMESTAMP_FORMAT;
+    use crate::TIMESTAMP_FORMAT;
     use chrono::NaiveDateTime;
     use eframe::egui;
     use std::{fs, path::Path, thread, time::Duration};
     use tempfile::tempdir;
 
     fn write_required_files(folder: &Path) {
-        for file in crate::state::REQUIRED_PROJECT_FILES {
+        for file in crate::REQUIRED_PROJECT_FILES {
             let path = folder.join(file);
             fs::write(&path, b"data").expect("write required file");
         }
@@ -340,7 +340,9 @@ mod tests {
     #[test]
     fn timestamp_panel_serializes_rules() {
         let mut app = PackerApp::default();
-        app.timestamp_rules_ui.set_seconds_between_items(8);
+        app.packer_state
+            .timestamp_rules_ui
+            .set_seconds_between_items(8);
         app.mark_timestamp_rules_modified();
 
         let mut panel = TimestampRulesPanel::default();
@@ -352,6 +354,7 @@ mod tests {
         });
 
         let serialized = app
+            .packer_state
             .timestamp_rules_ui
             .serialize()
             .expect("serialize timestamp rules");
@@ -366,7 +369,7 @@ mod tests {
         write_required_files(&project_dir);
 
         let mut app = PackerApp::default();
-        app.timestamp = Some(
+        app.packer_state.timestamp = Some(
             NaiveDateTime::parse_from_str("2024-01-01 12:00:00", TIMESTAMP_FORMAT)
                 .expect("parse timestamp"),
         );
@@ -392,6 +395,6 @@ mod tests {
         wait_for_pack_completion(&mut app);
 
         assert!(output_path.exists());
-        assert!(app.error_message.is_none());
+        assert!(app.packer_state.error_message.is_none());
     }
 }

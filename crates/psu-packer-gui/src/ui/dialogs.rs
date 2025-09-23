@@ -3,7 +3,7 @@ use eframe::egui;
 use crate::PackerApp;
 
 pub(crate) fn pack_confirmation(app: &mut PackerApp, ctx: &egui::Context) {
-    if let Some(missing) = app.pending_pack_missing_files() {
+    if let Some(missing) = app.packer_state.pending_pack_missing_files() {
         let message = PackerApp::format_missing_required_files_message(missing);
         egui::Window::new("Confirm Packing")
             .collapsible(false)
