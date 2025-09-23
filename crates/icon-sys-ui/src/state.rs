@@ -90,43 +90,13 @@ impl IconSysState {
     ) {
         self.set_flag_value(icon_cfg.flags.value());
 
-        self.background_transparency = icon_cfg.background_transparency.unwrap_or_else(|| {
-            icon_sys_fallback
-                .map(|icon_sys| icon_sys.background_transparency)
-                .unwrap_or_else(IconSysConfig::default_background_transparency)
-        });
+        let resolved = icon_cfg.resolved_with_fallback(icon_sys_fallback);
 
-        self.background_colors = if icon_cfg.background_colors.is_some() {
-            icon_cfg.background_colors_array()
-        } else if let Some(icon_sys) = icon_sys_fallback {
-            background_colors_from_icon_sys(icon_sys)
-        } else {
-            IconSysConfig::default_background_colors()
-        };
-
-        self.light_directions = if icon_cfg.light_directions.is_some() {
-            icon_cfg.light_directions_array()
-        } else if let Some(icon_sys) = icon_sys_fallback {
-            light_directions_from_icon_sys(icon_sys)
-        } else {
-            IconSysConfig::default_light_directions()
-        };
-
-        self.light_colors = if icon_cfg.light_colors.is_some() {
-            icon_cfg.light_colors_array()
-        } else if let Some(icon_sys) = icon_sys_fallback {
-            light_colors_from_icon_sys(icon_sys)
-        } else {
-            IconSysConfig::default_light_colors()
-        };
-
-        self.ambient_color = if let Some(color) = icon_cfg.ambient_color {
-            color
-        } else if let Some(icon_sys) = icon_sys_fallback {
-            ambient_color_from_icon_sys(icon_sys)
-        } else {
-            IconSysConfig::default_ambient_color()
-        };
+        self.background_transparency = resolved.background_transparency;
+        self.background_colors = resolved.background_colors;
+        self.light_directions = resolved.light_directions;
+        self.light_colors = resolved.light_colors;
+        self.ambient_color = resolved.ambient_color;
 
         self.selected_preset = icon_cfg.preset.clone();
     }
