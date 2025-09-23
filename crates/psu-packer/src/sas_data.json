@@ -1,0 +1,22 @@
+{
+  "charset": " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_-.",
+  "defaults": {
+    "seconds_between_items": 2,
+    "slots_per_category": 43200
+  },
+  "categories": [
+    { "key": "APP_", "aliases": ["OSDXMB", "XEBPLUS"] },
+    { "key": "APPS", "aliases": [] },
+    { "key": "PS1_", "aliases": [] },
+    { "key": "EMU_", "aliases": [] },
+    { "key": "GME_", "aliases": [] },
+    { "key": "DST_", "aliases": [] },
+    { "key": "DBG_", "aliases": [] },
+    { "key": "RAA_", "aliases": ["RESTART", "POWEROFF"] },
+    { "key": "RTE_", "aliases": ["NEUTRINO"] },
+    { "key": "DEFAULT", "aliases": [] },
+    { "key": "SYS_", "aliases": ["BOOT"] },
+    { "key": "ZZY_", "aliases": ["EXPLOITS"] },
+    { "key": "ZZZ_", "aliases": ["BM", "MATRIXTEAM", "OPL"] }
+  ]
+}
