@@ -138,6 +138,43 @@ Key expectations:
 - Array lengths are validated; the packer reports descriptive errors if counts do not match firmware expectations.
 - Templates live in `assets/templates/psu.toml` and `assets/templates/title.cfg`.
 
+## Timestamp planning utility (Windows)
+
+The repository ships with a Windows-only helper, `sas_timestamps.py`, that deterministically
+orders project folders by writing creation/modification/access timestamps via Win32
+`SetFileTime`. The tool now combines the behaviour of the historical
+`SAS-TIMESTAMPS-V2.py` (fixed UTC spacing) and `timestampdiscrepancyfixtest1.py` (FAT-safe
+spacing with PS2 bias support).
+
+### Quick start
+
+```bash
+# Dry-run using the FAT-friendly defaults (two-second spacing, even-second snapping)
+python sas_timestamps.py --fat-safe --dry-run
+
+# Apply a PS2 clock correction while staying FAT-safe
+python sas_timestamps.py --fat-safe --ps2-bias-seconds -3563
+
+# Recreate the legacy UTC script behaviour with CSV dry-run output
+python sas_timestamps.py \
+  --timeline fixed-utc \
+  --seconds-between-items 1 \
+  --slots-per-category 86400 \
+  --dry-run-format csv \
+  --stable-nudge
+```
+
+Key options:
+
+- `--timeline {local-forward,fixed-utc}` toggles between the FAT/VFAT-friendly forward timeline
+  and the original UTC countdown used by `SAS-TIMESTAMPS-V2.py`.
+- `--seconds-between-items`, `--slots-per-category`, and `--stable-nudge` let you match the exact
+  spacing and tie-breaking behaviour of either historical script.
+- `--fat-safe` snaps results to even seconds to avoid FAT/VFAT rounding drift.
+- `--dry-run --dry-run-format {csv,tsv}` exports the computed plan without mutating any files.
+- `--ps2-bias-seconds` adds an additional signed offset so PS2 browsers display the same times as
+  Windows Explorer when the console's RTC is skewed.
+
 ## Contributing
 
 1. Fork and clone the repository.
