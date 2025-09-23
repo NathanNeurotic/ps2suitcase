@@ -13,7 +13,7 @@ PS2Suitcase is a Rust toolchain for building, inspecting, and packaging PlayStat
 - **`suitcase` (PS2Suitcase GUI):** Full-featured desktop app with project workspaces, live validation, icon/sys editors, and PSU export workflows.
 - **`psu-packer` (CLI):** Standalone packer that reads `psu.toml`, regenerates `icon.sys` when requested, and writes deterministic `.psu` archives.
 - **`psu-packer-gui`:** Lightweight GUI wrapper around the packer for quick folder selection and metadata edits when the full PS2Suitcase interface is unnecessary.
-- **Libraries:** `ps2-filetypes` (parsers and writers for PSU, ICON, and TITLE files) and `memcard` (memory-card utilities under active refactor), plus shared UI macros.
+- **Libraries:** `ps2-filetypes` (parsers and writers for PSU, ICON, and TITLE files) and `memcard` (an experimental memory-card toolkit kept in-tree for future features), plus shared UI macros.
 - **Packaging tooling:** `xtask-build-app` bundles the PS2Suitcase GUI into a macOS `.app` structure with the correct resources.
 
 ## Feature highlights
@@ -92,6 +92,15 @@ This windowed utility mirrors the CLI packer with a simplified layout for quick 
    ```
    This writes `build/PSU Builder.app/` with the executable, icon, and `Info.plist`. Codesign and notarise as required for distribution.
 4. Include sample templates from `assets/templates/` in your distribution package so users can scaffold new projects quickly.
+
+## Workspace maintenance
+
+- Every crate under `crates/` should either ship in the released tooling or be
+  explicitly marked as experimental. If a package becomes unused, remove it from
+  the workspace to keep `cargo` builds predictable.
+- Run `cargo metadata --format-version 1` during CI or local checks after adding
+  or removing crates. This ensures the workspace manifest stays in sync with the
+  directories on disk and flags missing members early.
 
 ## Configuration (`psu.toml`)
 
