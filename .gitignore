@@ -1,2 +1,4 @@
 target
 build
+# Prevent nested crate lockfiles; workspace uses root Cargo.lock.
+crates/ps2-filetypes/Cargo.lock
