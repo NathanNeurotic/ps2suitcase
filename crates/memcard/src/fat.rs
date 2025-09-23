@@ -120,6 +120,10 @@ impl Memcard {
         mc
     }
 
+    pub fn rootdir_cluster(&self) -> u32 {
+        self.rootdir_cluster as u32
+    }
+
     fn build_matrix(&mut self, cluster_list: Vec<u32>) -> Vec<Vec<u32>> {
         let mut matrix = vec![vec![0; self.fat_per_cluster]; cluster_list.len()];
 
@@ -275,5 +279,4 @@ impl Memcard {
             }
         }
     }
-
 }

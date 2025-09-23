@@ -1,6 +1,6 @@
+use byteorder::{ReadBytesExt, LE};
 use std::io;
 use std::io::{Cursor, Read, Seek};
-use byteorder::{ReadBytesExt, LE};
 
 pub const DF_READ: u16 = 0x0001;
 pub const DF_WRITE: u16 = 0x0002;
@@ -8,7 +8,7 @@ pub const DF_EXECUTE: u16 = 0x0004;
 pub const DF_PROTECTED: u16 = 0x0008;
 pub const DF_FILE: u16 = 0x0010;
 pub const DF_DIRECTORY: u16 = 0x0020;
-pub const DF_0400: u16 =  0x0400;
+pub const DF_0400: u16 = 0x0400;
 pub const DF_EXISTS: u16 = 0x8000;
 pub const DF_HIDDEN: u16 = 0x2000;
 
@@ -76,7 +76,6 @@ impl DirEntry {
         c.seek_relative(28)?;
         let mut name = [0; 32];
         c.read_exact(&mut name)?;
-
 
         Ok(DirEntry {
             mode,
