@@ -14,21 +14,22 @@ use crate::{
 };
 use chrono::NaiveDateTime;
 use eframe::egui::{self, Widget};
-use gui_core::actions::{Action, ActionDispatcher, MetadataTarget};
+use gui_core::{
+    actions::{Action, ActionDispatcher, MetadataTarget},
+    state::{
+        MissingRequiredFile, ProjectRequirementStatus, SasPrefix, TimestampRulesUiState,
+        TimestampStrategy, REQUIRED_PROJECT_FILES, TIMESTAMP_RULES_FILE,
+    },
+};
 use icon_sys_ui::IconSysState;
 use indexmap::IndexMap;
 use ps2_filetypes::{templates, IconSys, PSUEntryKind, TitleCfg, PSU};
-use psu_packer::sas::CategoryRule;
 use psu_packer::split_icon_sys_title;
 use tempfile::{tempdir, TempDir};
 use toml::Table;
 
 use sas_timestamps::TimestampRules;
 
-pub const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
-const TIMESTAMP_RULES_FILE: &str = "timestamp_rules.json";
-pub const REQUIRED_PROJECT_FILES: &[&str] =
-    &["list.icn", "copy.icn", "del.icn", "title.cfg", "icon.sys"];
 pub(crate) const CENTERED_COLUMN_MAX_WIDTH: f32 = 1180.0;
 pub(crate) const PACK_CONTROLS_TWO_COLUMN_MIN_WIDTH: f32 = 940.0;
 const TITLE_CFG_GRID_SPACING: [f32; 2] = [28.0, 12.0];
@@ -64,164 +65,6 @@ const TITLE_CFG_SECTIONS: &[(&str, &[&str])] = &[
     ),
     ("Ratings", &["Rating", "RatingText"]),
 ];
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MissingFileReason {
-    AlwaysRequired,
-    ExplicitlyIncluded,
-    TimestampAutomation,
-}
-
-impl MissingFileReason {
-    pub(crate) fn detail(&self) -> Option<&'static str> {
-        match self {
-            MissingFileReason::AlwaysRequired => None,
-            MissingFileReason::ExplicitlyIncluded => Some("listed in Include files"),
-            MissingFileReason::TimestampAutomation => Some("needed for SAS timestamp automation"),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MissingRequiredFile {
-    pub(crate) name: String,
-    pub(crate) reason: MissingFileReason,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProjectRequirementStatus {
-    pub(crate) file: MissingRequiredFile,
-    pub(crate) satisfied: bool,
-}
-
-impl MissingRequiredFile {
-    fn always(name: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            reason: MissingFileReason::AlwaysRequired,
-        }
-    }
-
-    fn included(name: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            reason: MissingFileReason::ExplicitlyIncluded,
-        }
-    }
-
-    fn timestamp_rules() -> Self {
-        Self {
-            name: TIMESTAMP_RULES_FILE.to_string(),
-            reason: MissingFileReason::TimestampAutomation,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SasPrefix {
-    None,
-    App,
-    Apps,
-    Ps1,
-    Emu,
-    Gme,
-    Dst,
-    Dbg,
-    Raa,
-    Rte,
-    Default,
-    Sys,
-    Zzy,
-    Zzz,
-}
-
-pub(crate) const SAS_PREFIXES: [SasPrefix; 13] = [
-    SasPrefix::App,
-    SasPrefix::Apps,
-    SasPrefix::Ps1,
-    SasPrefix::Emu,
-    SasPrefix::Gme,
-    SasPrefix::Dst,
-    SasPrefix::Dbg,
-    SasPrefix::Raa,
-    SasPrefix::Rte,
-    SasPrefix::Default,
-    SasPrefix::Sys,
-    SasPrefix::Zzy,
-    SasPrefix::Zzz,
-];
-
-impl Default for SasPrefix {
-    fn default() -> Self {
-        SasPrefix::App
-    }
-}
-
-impl SasPrefix {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            SasPrefix::None => "",
-            SasPrefix::App => "APP_",
-            SasPrefix::Apps => "APPS",
-            SasPrefix::Ps1 => "PS1_",
-            SasPrefix::Emu => "EMU_",
-            SasPrefix::Gme => "GME_",
-            SasPrefix::Dst => "DST_",
-            SasPrefix::Dbg => "DBG_",
-            SasPrefix::Raa => "RAA_",
-            SasPrefix::Rte => "RTE_",
-            SasPrefix::Default => "DEFAULT",
-            SasPrefix::Sys => "SYS_",
-            SasPrefix::Zzy => "ZZY_",
-            SasPrefix::Zzz => "ZZZ_",
-        }
-    }
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            SasPrefix::None => "(none)",
-            SasPrefix::Default => "DEFAULT",
-            _ => self.as_str(),
-        }
-    }
-
-    pub(crate) fn iter_prefixed() -> impl Iterator<Item = SasPrefix> {
-        SAS_PREFIXES.into_iter()
-    }
-
-    pub(crate) fn iter_with_unprefixed() -> impl Iterator<Item = SasPrefix> {
-        std::iter::once(SasPrefix::None).chain(Self::iter_prefixed())
-    }
-
-    pub(crate) fn split_from_name(name: &str) -> (SasPrefix, &str) {
-        for prefix in SAS_PREFIXES {
-            let remainder = match prefix {
-                SasPrefix::Default => name
-                    .strip_prefix("DEFAULT_")
-                    .or_else(|| name.strip_prefix(prefix.as_str())),
-                _ => name.strip_prefix(prefix.as_str()),
-            };
-            if let Some(remainder) = remainder {
-                return (prefix, remainder);
-            }
-        }
-        (SasPrefix::None, name)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TimestampStrategy {
-    None,
-    InheritSource,
-    SasRules,
-    Manual,
-}
-
-impl Default for TimestampStrategy {
-    fn default() -> Self {
-        TimestampStrategy::None
-    }
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EditorTab {
@@ -348,251 +191,6 @@ impl TextFileEditor {
     fn title_cfg_missing_fields(&mut self) -> Option<&[&'static str]> {
         self.title_cfg_cache().map(|cache| cache.missing_fields())
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TimestampRulesUiState {
-    seconds_between_items: u32,
-    slots_per_category: u32,
-    categories: Vec<CategoryUiState>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct CategoryUiState {
-    key: String,
-    available_aliases: Vec<String>,
-    selected_aliases: HashSet<String>,
-}
-
-impl TimestampRulesUiState {
-    pub(crate) fn from_rules(rules: &TimestampRules) -> Self {
-        let mut sanitized = rules.clone();
-        sanitized.sanitize();
-
-        let categories = sanitized
-            .categories
-            .iter()
-            .map(|category| {
-                let available_aliases =
-                    sas_timestamps::canonical_aliases_for_category(category.key.as_str())
-                        .iter()
-                        .map(|alias| (*alias).to_string())
-                        .collect::<Vec<_>>();
-                let selected_aliases = category
-                    .aliases
-                    .iter()
-                    .filter(|alias| {
-                        available_aliases
-                            .iter()
-                            .any(|candidate| candidate == *alias)
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>();
-                CategoryUiState::new(category.key.clone(), available_aliases, selected_aliases)
-            })
-            .collect();
-
-        Self {
-            seconds_between_items: sanitize_seconds_between_items(sanitized.seconds_between_items),
-            slots_per_category: sanitized.slots_per_category.max(1),
-            categories,
-        }
-    }
-
-    pub(crate) fn ensure_matches(&mut self, rules: &TimestampRules) {
-        let refreshed = Self::from_rules(rules);
-        if *self != refreshed {
-            *self = refreshed;
-        }
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.categories.len()
-    }
-
-    pub(crate) fn seconds_between_items(&self) -> u32 {
-        self.seconds_between_items
-    }
-
-    pub(crate) fn slots_per_category(&self) -> u32 {
-        self.slots_per_category
-    }
-
-    pub(crate) fn set_seconds_between_items(&mut self, value: u32) -> bool {
-        let sanitized = sanitize_seconds_between_items(value);
-        if sanitized != self.seconds_between_items {
-            self.seconds_between_items = sanitized;
-            true
-        } else {
-            false
-        }
-    }
-
-    pub(crate) fn set_slots_per_category(&mut self, value: u32) -> bool {
-        let sanitized = value.max(1);
-        if sanitized != self.slots_per_category {
-            self.slots_per_category = sanitized;
-            true
-        } else {
-            false
-        }
-    }
-
-    pub(crate) fn category(&self, index: usize) -> Option<&CategoryUiState> {
-        self.categories.get(index)
-    }
-
-    pub(crate) fn category_mut(&mut self, index: usize) -> Option<&mut CategoryUiState> {
-        self.categories.get_mut(index)
-    }
-
-    pub(crate) fn move_category_up(&mut self, index: usize) -> bool {
-        if index == 0 || index >= self.categories.len() {
-            return false;
-        }
-        self.categories.swap(index - 1, index);
-        true
-    }
-
-    pub(crate) fn move_category_down(&mut self, index: usize) -> bool {
-        if index + 1 >= self.categories.len() {
-            return false;
-        }
-        self.categories.swap(index, index + 1);
-        true
-    }
-
-    pub(crate) fn set_alias_selected(&mut self, index: usize, alias: &str, selected: bool) -> bool {
-        self.category_mut(index)
-            .map(|category| category.set_alias_selected(alias, selected))
-            .unwrap_or(false)
-    }
-
-    pub(crate) fn alias_warning(&self, index: usize) -> Option<String> {
-        self.category(index).and_then(|category| category.warning())
-    }
-
-    pub(crate) fn apply_to_rules(&self, rules: &mut TimestampRules) -> bool {
-        let new_rules = self.to_rules();
-        let changed = !timestamp_rules_equal(rules, &new_rules);
-        if changed {
-            *rules = new_rules;
-        } else {
-            // ensure sanitized values propagate even when unchanged
-            *rules = new_rules;
-        }
-        changed
-    }
-
-    pub(crate) fn serialize(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(&self.to_rules())
-    }
-
-    fn to_rules(&self) -> TimestampRules {
-        let mut rules = TimestampRules {
-            seconds_between_items: sanitize_seconds_between_items(self.seconds_between_items),
-            slots_per_category: self.slots_per_category.max(1),
-            categories: self
-                .categories
-                .iter()
-                .map(|category| CategoryRule {
-                    key: category.key.clone(),
-                    aliases: category.sorted_aliases(),
-                })
-                .collect(),
-        };
-        rules.sanitize();
-        rules.seconds_between_items = sanitize_seconds_between_items(self.seconds_between_items);
-        rules.slots_per_category = self.slots_per_category.max(1);
-        rules
-    }
-}
-
-impl CategoryUiState {
-    fn new(key: String, available_aliases: Vec<String>, selected_aliases: Vec<String>) -> Self {
-        let selected_aliases = selected_aliases.into_iter().collect::<HashSet<_>>();
-        Self {
-            key,
-            available_aliases,
-            selected_aliases,
-        }
-    }
-
-    pub(crate) fn key(&self) -> &str {
-        &self.key
-    }
-
-    pub(crate) fn alias_count(&self) -> usize {
-        self.selected_aliases.len()
-    }
-
-    pub(crate) fn available_aliases(&self) -> &[String] {
-        &self.available_aliases
-    }
-
-    pub(crate) fn is_alias_selected(&self, alias: &str) -> bool {
-        self.selected_aliases.contains(alias)
-    }
-
-    fn set_alias_selected(&mut self, alias: &str, selected: bool) -> bool {
-        if !self
-            .available_aliases
-            .iter()
-            .any(|candidate| candidate == alias)
-        {
-            return false;
-        }
-
-        if selected {
-            if self.selected_aliases.insert(alias.to_string()) {
-                return true;
-            }
-        } else if self.selected_aliases.remove(alias) {
-            return true;
-        }
-        false
-    }
-
-    fn sorted_aliases(&self) -> Vec<String> {
-        self.available_aliases
-            .iter()
-            .filter(|alias| self.selected_aliases.contains(alias.as_str()))
-            .cloned()
-            .collect()
-    }
-
-    fn warning(&self) -> Option<String> {
-        if self.available_aliases.is_empty() || !self.selected_aliases.is_empty() {
-            None
-        } else {
-            let alias_list = self.available_aliases.join(", ");
-            Some(format!(
-                "No aliases selected. Unprefixed names ({alias_list}) will fall back to DEFAULT scheduling."
-            ))
-        }
-    }
-}
-
-fn sanitize_seconds_between_items(value: u32) -> u32 {
-    let adjusted = u64::from(value.max(2));
-    let next_even = ((adjusted + 1) / 2) * 2;
-    let max_value = u64::from(u32::MAX);
-    let max_even = max_value - (max_value % 2);
-    next_even.min(max_even) as u32
-}
-
-fn timestamp_rules_equal(left: &TimestampRules, right: &TimestampRules) -> bool {
-    if left.seconds_between_items != right.seconds_between_items
-        || left.slots_per_category != right.slots_per_category
-        || left.categories.len() != right.categories.len()
-    {
-        return false;
-    }
-
-    left.categories
-        .iter()
-        .zip(right.categories.iter())
-        .all(|(lhs, rhs)| lhs.key == rhs.key && lhs.aliases == rhs.aliases)
 }
 
 pub struct PackerApp {
@@ -1053,18 +651,7 @@ impl PackerApp {
     }
 
     pub(crate) fn format_missing_required_files_message(missing: &[MissingRequiredFile]) -> String {
-        let formatted = missing
-            .iter()
-            .map(|entry| match entry.reason.detail() {
-                Some(detail) => format!("• {} ({detail})", entry.name),
-                None => format!("• {}", entry.name),
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!(
-            "The selected folder is missing files needed to pack the PSU:\n{}",
-            formatted
-        )
+        gui_core::validation::format_missing_required_files_message(missing)
     }
 
     pub(crate) fn clear_error_message(&mut self) {
@@ -2945,7 +2532,7 @@ linebreak_pos = 5
         assert_eq!(app.include_files, vec!["BOOT.ELF", "DATA.BIN"]);
         assert_eq!(app.exclude_files, vec!["IGNORE.DAT"]);
         let expected_timestamp =
-            NaiveDateTime::parse_from_str(timestamp, TIMESTAMP_FORMAT).unwrap();
+            NaiveDateTime::parse_from_str(timestamp, gui_core::state::TIMESTAMP_FORMAT).unwrap();
         assert_eq!(app.timestamp, Some(expected_timestamp));
         assert_eq!(app.timestamp_strategy, TimestampStrategy::Manual);
         assert!(app.icon_sys_enabled);

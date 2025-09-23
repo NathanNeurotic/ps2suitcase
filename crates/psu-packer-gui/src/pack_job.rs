@@ -4,7 +4,7 @@ use std::{
     thread,
 };
 
-use crate::state::MissingRequiredFile;
+use crate::MissingRequiredFile;
 
 pub(crate) struct PackJob {
     pub(crate) progress: Arc<Mutex<PackProgress>>,

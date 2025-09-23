@@ -17,7 +17,7 @@ gui-core = { path = "../gui-core" }
 eframe = { version = "0.31.1", features = ["default", "wgpu"] }
 rfd = "0.14"
 chrono = "0.4.42"
-egui_extras = { version = "0.31.1", features = ["chrono"] }
+egui_extras = { version = "0.31.1", features = ["chrono", "serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
