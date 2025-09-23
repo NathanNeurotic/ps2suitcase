@@ -1,4 +1,3 @@
-use std::ops::{Deref, DerefMut};
 use std::{
     collections::{HashMap, HashSet},
     fs, io,
@@ -8,20 +7,22 @@ use std::{
 use crate::ui;
 use crate::ui::theme;
 use eframe::egui::{self, Widget};
+#[cfg(test)]
+use gui_core::state::{SasPrefix, REQUIRED_PROJECT_FILES, TIMESTAMP_RULES_FILE};
 use gui_core::{
     actions::{Action, ActionDispatcher, MetadataTarget},
     state::{
-        MissingRequiredFile, PackOutcome, PackPreparation, PackerState, PendingPackAction,
-        TimestampStrategy,
+        MissingRequiredFile, PackErrorMessage, PackOutcome, PackPreparation, PackerState,
+        PendingPackAction, TimestampStrategy,
     },
 };
-#[cfg(test)]
-use gui_core::state::{SasPrefix, REQUIRED_PROJECT_FILES, TIMESTAMP_RULES_FILE};
 use icon_sys_ui::IconSysState;
 use indexmap::IndexMap;
-use ps2_filetypes::{templates, IconSys, PSUEntryKind, TitleCfg, PSU};
+use ps2_filetypes::{templates, IconSys, TitleCfg};
 use psu_packer::split_icon_sys_title;
-use tempfile::{tempdir, TempDir};
+#[cfg(any(test, feature = "psu-toml-editor"))]
+use tempfile::tempdir;
+use tempfile::TempDir;
 use toml::Table;
 
 pub(crate) const CENTERED_COLUMN_MAX_WIDTH: f32 = 1180.0;
@@ -188,7 +189,7 @@ impl TextFileEditor {
 }
 
 pub struct PackerApp {
-    pub(crate) state: PackerState,
+    pub(crate) packer_state: PackerState,
     pub(crate) show_exit_confirm: bool,
     pub(crate) exit_confirmed: bool,
     pub(crate) icon_sys_enabled: bool,
@@ -210,7 +211,7 @@ pub struct PackerApp {
 impl Default for PackerApp {
     fn default() -> Self {
         Self {
-            state: PackerState::default(),
+            packer_state: PackerState::default(),
             show_exit_confirm: false,
             exit_confirmed: false,
             icon_sys_enabled: false,
@@ -231,26 +232,20 @@ impl Default for PackerApp {
     }
 }
 
-impl Deref for PackerApp {
-    type Target = PackerState;
-
-    fn deref(&self) -> &Self::Target {
-        &self.state
-    }
-}
-
-impl DerefMut for PackerApp {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.state
-    }
-}
-
 impl PackerApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let mut app = Self::default();
         app.zoom_factor = cc.egui_ctx.pixels_per_point();
         theme::install(&cc.egui_ctx, &app.theme);
         app
+    }
+
+    pub(crate) fn packer_state(&self) -> &PackerState {
+        &self.packer_state
+    }
+
+    pub(crate) fn packer_state_mut(&mut self) -> &mut PackerState {
+        &mut self.packer_state
     }
 
     pub(crate) fn editor_tab_button(
@@ -275,25 +270,25 @@ impl PackerApp {
     }
 
     pub(crate) fn set_timestamp_strategy(&mut self, strategy: TimestampStrategy) {
-        if PackerState::set_timestamp_strategy(self, strategy) {
+        if self.packer_state.set_timestamp_strategy(strategy) {
             self.refresh_psu_toml_editor();
         }
     }
 
     pub(crate) fn refresh_timestamp_from_strategy(&mut self) {
-        if PackerState::refresh_timestamp_from_strategy(self) {
+        if self.packer_state.refresh_timestamp_from_strategy() {
             self.refresh_psu_toml_editor();
         }
     }
 
     pub(crate) fn sync_timestamp_after_source_update(&mut self) {
-        if PackerState::sync_timestamp_after_source_update(self) {
+        if self.packer_state.sync_timestamp_after_source_update() {
             self.refresh_psu_toml_editor();
         }
     }
 
     pub(crate) fn mark_timestamp_rules_modified(&mut self) {
-        PackerState::mark_timestamp_rules_modified(self);
+        self.packer_state.mark_timestamp_rules_modified();
         self.refresh_psu_toml_editor();
     }
 
@@ -302,12 +297,51 @@ impl PackerApp {
     }
 
     pub(crate) fn reset_timestamp_rules_to_default(&mut self) {
-        PackerState::reset_timestamp_rules_to_default(self);
+        self.packer_state.reset_timestamp_rules_to_default();
         self.refresh_psu_toml_editor();
     }
 
     pub(crate) fn clear_error_message(&mut self) {
-        self.error_message = None;
+        self.packer_state.clear_error_message();
+    }
+
+    pub(crate) fn set_error_message<M>(&mut self, message: M)
+    where
+        M: Into<PackErrorMessage>,
+    {
+        self.packer_state.set_error_message(message);
+    }
+
+    pub(crate) fn cancel_pending_pack_action(&mut self) {
+        self.packer_state.cancel_pending_pack_action();
+    }
+
+    pub(crate) fn default_output_file_name(&self) -> Option<String> {
+        self.packer_state.default_output_file_name()
+    }
+
+    pub(crate) fn default_output_path(&self) -> Option<PathBuf> {
+        self.packer_state.default_output_path()
+    }
+
+    pub(crate) fn default_output_path_with(&self, fallback: Option<&Path>) -> Option<PathBuf> {
+        self.packer_state.default_output_path_with(fallback)
+    }
+
+    pub(crate) fn default_output_directory(&self, fallback: Option<&Path>) -> Option<PathBuf> {
+        self.packer_state.default_output_directory(fallback)
+    }
+
+    pub(crate) fn set_folder_name_from_full(&mut self, name: &str) {
+        self.packer_state.set_folder_name_from_full(name);
+    }
+
+    pub(crate) fn set_psu_file_base_from_full(&mut self, file_stem: &str) {
+        self.packer_state.set_psu_file_base_from_full(file_stem);
+    }
+
+    pub(crate) fn missing_include_files(&self, folder: &Path) -> Vec<String> {
+        self.packer_state.missing_include_files(folder)
     }
 
     pub(crate) fn reset_icon_sys_fields(&mut self) {
@@ -356,17 +390,18 @@ impl PackerApp {
     }
 
     pub(crate) fn reset_metadata_fields(&mut self) {
-        PackerState::reset_metadata_fields(self);
+        self.packer_state.reset_metadata_fields();
         self.reset_icon_sys_fields();
     }
 
     pub(crate) fn metadata_inputs_changed(&mut self, previous_default_output: Option<String>) {
-        PackerState::metadata_inputs_changed(self, previous_default_output);
+        self.packer_state
+            .metadata_inputs_changed(previous_default_output);
         self.refresh_psu_toml_editor();
     }
 
     pub(crate) fn confirm_pending_pack_action(&mut self) {
-        if let Some((folder, output_path, config)) = PackerState::confirm_pending_pack_action(self)
+        if let Some((folder, output_path, config)) = self.packer_state.confirm_pending_pack_action()
         {
             self.begin_pack_job(folder, output_path, config);
         }
@@ -392,7 +427,7 @@ impl PackerApp {
             return;
         };
 
-        let output_path = PathBuf::from(&self.output);
+        let output_path = PathBuf::from(&self.packer_state.output);
         let PackPreparation {
             folder,
             config,
@@ -402,7 +437,7 @@ impl PackerApp {
         if missing_required_files.is_empty() {
             self.begin_pack_job(folder, output_path, config);
         } else {
-            self.pending_pack_action = Some(PendingPackAction::Pack {
+            self.packer_state.pending_pack_action = Some(PendingPackAction::Pack {
                 folder,
                 output_path,
                 config,
@@ -416,7 +451,8 @@ impl PackerApp {
             return;
         }
 
-        if self.loaded_psu_path.is_none() && self.output.trim().is_empty() {
+        if self.packer_state.loaded_psu_path.is_none() && self.packer_state.output.trim().is_empty()
+        {
             if !self.ensure_output_destination_selected() {
                 return;
             }
@@ -439,9 +475,9 @@ impl PackerApp {
         }
 
         let mut temp_workspace_to_hold: Option<TempDir> = None;
-        let preparation_result = if self.folder.is_some() {
+        let preparation_result = if self.packer_state.folder.is_some() {
             self.prepare_pack_inputs()
-        } else if self.loaded_psu_path.is_some() {
+        } else if self.packer_state.loaded_psu_path.is_some() {
             let (workspace, export_root) = match self.prepare_loaded_psu_workspace() {
                 Ok(result) => result,
                 Err(message) => {
@@ -463,14 +499,14 @@ impl PackerApp {
         };
 
         if !preparation.missing_required_files.is_empty() {
-            self.pending_pack_action = None;
-            self.temp_workspace = None;
+            self.packer_state.pending_pack_action = None;
+            self.packer_state.temp_workspace = None;
             return;
         }
 
         let PackPreparation { folder, config, .. } = preparation;
 
-        self.temp_workspace = temp_workspace_to_hold;
+        self.packer_state.temp_workspace = temp_workspace_to_hold;
         self.begin_pack_job(folder, destination, config);
     }
 
@@ -479,7 +515,8 @@ impl PackerApp {
             return;
         }
 
-        if self.loaded_psu_path.is_none() && self.output.trim().is_empty() {
+        if self.packer_state.loaded_psu_path.is_none() && self.packer_state.output.trim().is_empty()
+        {
             if !self.ensure_output_destination_selected() {
                 return;
             }
@@ -500,7 +537,7 @@ impl PackerApp {
         match self.export_psu_to_folder(&source_path, &destination_parent) {
             Ok(export_root) => {
                 self.clear_error_message();
-                self.status = format!(
+                self.packer_state.status = format!(
                     "Exported PSU contents from {} to {}",
                     source_path.display(),
                     export_root.display()
@@ -513,7 +550,7 @@ impl PackerApp {
     }
 
     fn prepare_pack_inputs(&mut self) -> Option<PackPreparation> {
-        let Some(folder) = self.folder.clone() else {
+        let Some(folder) = self.packer_state.folder.clone() else {
             self.set_error_message("Please select a folder");
             return None;
         };
@@ -527,29 +564,31 @@ impl PackerApp {
         config_override: Option<psu_packer::Config>,
         allow_missing_psu_toml: bool,
     ) -> Option<PackPreparation> {
-        if self.folder_base_name.trim().is_empty() {
+        if self.packer_state.folder_base_name.trim().is_empty() {
             self.set_error_message("Please provide a folder name");
             return None;
         }
 
-        if self.psu_file_base_name.trim().is_empty() {
-            let trimmed_folder = self.folder_base_name.trim();
+        if self.packer_state.psu_file_base_name.trim().is_empty() {
+            let trimmed_folder = self.packer_state.folder_base_name.trim();
             if trimmed_folder.is_empty() {
                 self.set_error_message("Please provide a PSU filename");
                 return None;
             }
-            self.psu_file_base_name = trimmed_folder.to_string();
+            self.packer_state.psu_file_base_name = trimmed_folder.to_string();
         }
 
         if !self.ensure_output_destination_selected() {
             return None;
         }
 
-        let mut missing = self.missing_required_project_files_for(&folder);
+        let mut missing = self
+            .packer_state
+            .missing_required_project_files_for(&folder);
         if allow_missing_psu_toml {
             missing.retain(|entry| !entry.name.eq_ignore_ascii_case("psu.toml"));
         }
-        self.missing_required_project_files = missing.clone();
+        self.packer_state.missing_required_project_files = missing.clone();
         if !missing.is_empty() {
             let message = Self::format_missing_required_files_message(&missing);
             let failed_files = missing.iter().map(|entry| entry.name.clone()).collect();
@@ -562,7 +601,7 @@ impl PackerApp {
                 Ok(config) => config,
                 Err(err) => {
                     self.set_error_message(err);
-                    self.pending_pack_action = None;
+                    self.packer_state.pending_pack_action = None;
                     return None;
                 }
             },
@@ -576,29 +615,11 @@ impl PackerApp {
     }
 
     fn determine_update_destination(&self) -> Result<PathBuf, String> {
-        if let Some(path) = &self.loaded_psu_path {
-            return Ok(path.clone());
-        }
-
-        let trimmed = self.output.trim();
-        if trimmed.is_empty() {
-            Err("Load a PSU file or set the output path before updating.".to_string())
-        } else {
-            Ok(PathBuf::from(trimmed))
-        }
+        self.packer_state.determine_update_destination()
     }
 
     fn determine_export_source_path(&self) -> Result<PathBuf, String> {
-        if let Some(path) = &self.loaded_psu_path {
-            return Ok(path.clone());
-        }
-
-        let trimmed = self.output.trim();
-        if trimmed.is_empty() {
-            Err("Load a PSU file or select a packed PSU before exporting its contents.".to_string())
-        } else {
-            Ok(PathBuf::from(trimmed))
-        }
+        self.packer_state.determine_export_source_path()
     }
 
     fn export_psu_to_folder(
@@ -606,103 +627,23 @@ impl PackerApp {
         source_path: &Path,
         destination_parent: &Path,
     ) -> Result<PathBuf, String> {
-        if !source_path.is_file() {
-            return Err(format!(
-                "Cannot export because {} does not exist.",
-                source_path.display()
-            ));
-        }
-
-        let data = fs::read(source_path)
-            .map_err(|err| format!("Failed to read {}: {err}", source_path.display()))?;
-
-        let parsed = std::panic::catch_unwind(|| PSU::new(data))
-            .map_err(|_| format!("Failed to parse PSU file {}", source_path.display()))?;
-
-        let entries = parsed.entries();
-        let root_name = entries
-            .iter()
-            .find(|entry| {
-                matches!(entry.kind, PSUEntryKind::Directory)
-                    && entry.name != "."
-                    && entry.name != ".."
-            })
-            .map(|entry| entry.name.clone())
-            .ok_or_else(|| format!("{} does not contain PSU metadata", source_path.display()))?;
-
-        if root_name.trim().is_empty() {
-            return Err(format!(
-                "{} does not contain a valid root directory entry.",
-                source_path.display()
-            ));
-        }
-
-        let export_root = destination_parent.join(&root_name);
-        fs::create_dir_all(&export_root)
-            .map_err(|err| format!("Failed to create {}: {err}", export_root.display()))?;
-
-        for entry in entries {
-            match entry.kind {
-                PSUEntryKind::Directory => {
-                    if entry.name == "." || entry.name == ".." {
-                        continue;
-                    }
-
-                    let target = if entry.name == root_name {
-                        export_root.clone()
-                    } else {
-                        export_root.join(&entry.name)
-                    };
-
-                    fs::create_dir_all(&target)
-                        .map_err(|err| format!("Failed to create {}: {err}", target.display()))?;
-                }
-                PSUEntryKind::File => {
-                    let Some(contents) = entry.contents else {
-                        return Err(format!(
-                            "{} is missing file data in the PSU archive.",
-                            entry.name
-                        ));
-                    };
-
-                    let target = export_root.join(&entry.name);
-                    if let Some(parent) = target.parent() {
-                        fs::create_dir_all(parent).map_err(|err| {
-                            format!("Failed to create {}: {err}", parent.display())
-                        })?;
-                    }
-
-                    fs::write(&target, contents)
-                        .map_err(|err| format!("Failed to write {}: {err}", target.display()))?;
-                }
-            }
-        }
-
-        Ok(export_root)
+        self.packer_state
+            .export_psu_to_folder(source_path, destination_parent)
     }
 
     fn prepare_loaded_psu_workspace(&self) -> Result<(TempDir, PathBuf), String> {
-        let source_path = self
-            .loaded_psu_path
-            .as_ref()
-            .ok_or_else(|| "No PSU file is currently loaded.".to_string())?;
-        let temp_dir =
-            tempdir().map_err(|err| format!("Failed to create temporary workspace: {err}"))?;
-        let export_root = self
-            .export_psu_to_folder(source_path, temp_dir.path())
-            .map_err(|err| format!("Failed to export loaded PSU: {err}"))?;
-        Ok((temp_dir, export_root))
+        self.packer_state.prepare_loaded_psu_workspace()
     }
 
     pub(crate) fn reload_project_files(&mut self) {
-        if let Some(folder) = self.folder.clone() {
+        if let Some(folder) = self.packer_state.folder.clone() {
             load_text_file_into_editor(folder.as_path(), "psu.toml", &mut self.psu_toml_editor);
             load_text_file_into_editor(folder.as_path(), "title.cfg", &mut self.title_cfg_editor);
             self.psu_toml_sync_blocked = false;
-            self.refresh_missing_required_project_files();
+            self.packer_state.refresh_missing_required_project_files();
         } else {
             self.clear_text_editors();
-            self.missing_required_project_files.clear();
+            self.packer_state.missing_required_project_files.clear();
         }
     }
 
@@ -743,22 +684,22 @@ impl PackerApp {
         } = config;
 
         self.set_folder_name_from_full(&name);
-        self.psu_file_base_name = self.folder_base_name.clone();
-        self.source_timestamp = timestamp;
-        self.manual_timestamp = timestamp;
-        self.timestamp = timestamp;
-        self.timestamp_strategy = if timestamp.is_some() {
+        self.packer_state.psu_file_base_name = self.packer_state.folder_base_name.clone();
+        self.packer_state.source_timestamp = timestamp;
+        self.packer_state.manual_timestamp = timestamp;
+        self.packer_state.timestamp = timestamp;
+        self.packer_state.timestamp_strategy = if timestamp.is_some() {
             TimestampStrategy::Manual
         } else {
             TimestampStrategy::None
         };
-        self.timestamp_from_rules = false;
+        self.packer_state.timestamp_from_rules = false;
         self.metadata_inputs_changed(previous_default_output);
 
-        self.include_files = include.unwrap_or_default();
-        self.exclude_files = exclude.unwrap_or_default();
-        self.selected_include = None;
-        self.selected_exclude = None;
+        self.packer_state.include_files = include.unwrap_or_default();
+        self.packer_state.exclude_files = exclude.unwrap_or_default();
+        self.packer_state.selected_include = None;
+        self.packer_state.selected_exclude = None;
 
         let existing_icon_sys = self.icon_sys_existing.clone();
 
@@ -777,7 +718,7 @@ impl PackerApp {
 
         self.psu_toml_sync_blocked = false;
         self.clear_error_message();
-        self.status = "Applied psu.toml edits in memory.".to_string();
+        self.packer_state.status = "Applied psu.toml edits in memory.".to_string();
         true
     }
 
@@ -796,7 +737,7 @@ impl PackerApp {
         }
 
         self.clear_error_message();
-        self.status = "Validated title.cfg contents.".to_string();
+        self.packer_state.status = "Validated title.cfg contents.".to_string();
         true
     }
 
@@ -827,7 +768,7 @@ impl PackerApp {
     }
 
     fn create_file_from_template(&mut self, file_name: &str, template: &str, tab: EditorTab) {
-        if let Some(folder) = self.folder.clone() {
+        if let Some(folder) = self.packer_state.folder.clone() {
             let path = folder.join(file_name);
             if path.exists() {
                 self.set_error_message(format!(
@@ -842,7 +783,7 @@ impl PackerApp {
                 return;
             }
 
-            self.status = format!("Created {} from template.", path.display());
+            self.packer_state.status = format!("Created {} from template.", path.display());
             self.clear_error_message();
             self.reload_project_files();
         } else {
@@ -850,7 +791,7 @@ impl PackerApp {
                 editor.set_content(template.to_string());
                 editor.modified = true;
                 self.clear_error_message();
-                self.status = format!(
+                self.packer_state.status = format!(
                     "Loaded default {file_name} template in the editor. Select a folder to save it."
                 );
             } else {
@@ -910,16 +851,19 @@ impl PackerApp {
     }
 
     pub(crate) fn has_source(&self) -> bool {
-        self.folder.is_some() || self.loaded_psu_path.is_some() || !self.loaded_psu_files.is_empty()
+        self.packer_state.folder.is_some()
+            || self.packer_state.loaded_psu_path.is_some()
+            || !self.packer_state.loaded_psu_files.is_empty()
     }
 
     pub(crate) fn showing_loaded_psu(&self) -> bool {
-        self.folder.is_none()
-            && (self.loaded_psu_path.is_some() || !self.loaded_psu_files.is_empty())
+        self.packer_state.folder.is_none()
+            && (self.packer_state.loaded_psu_path.is_some()
+                || !self.packer_state.loaded_psu_files.is_empty())
     }
 
     pub(crate) fn is_pack_running(&self) -> bool {
-        self.pack_job.is_some()
+        self.packer_state.is_pack_running()
     }
 
     #[cfg(not(test))]
@@ -929,8 +873,9 @@ impl PackerApp {
         output_path: PathBuf,
         config: psu_packer::Config,
     ) {
-        self.pending_pack_action = None;
-        PackerState::start_pack_job(self, folder, output_path, config);
+        self.packer_state.pending_pack_action = None;
+        self.packer_state
+            .start_pack_job(folder, output_path, config);
     }
 
     #[cfg(test)]
@@ -940,9 +885,10 @@ impl PackerApp {
         output_path: PathBuf,
         config: psu_packer::Config,
     ) {
-        self.pending_pack_action = None;
+        self.packer_state.pending_pack_action = None;
         self.test_pack_job_started = true;
-        PackerState::start_pack_job(self, folder, output_path, config);
+        self.packer_state
+            .start_pack_job(folder, output_path, config);
     }
 
     pub(crate) fn start_pack_job(
@@ -951,14 +897,15 @@ impl PackerApp {
         output_path: PathBuf,
         config: psu_packer::Config,
     ) {
-        PackerState::start_pack_job(self, folder, output_path, config);
+        self.packer_state
+            .start_pack_job(folder, output_path, config);
     }
 
     pub(crate) fn poll_pack_job(&mut self) {
-        if let Some(outcome) = PackerState::poll_pack_job(self) {
+        if let Some(outcome) = self.packer_state.poll_pack_job() {
             match outcome {
                 PackOutcome::Success { output_path } => {
-                    self.status = format!("Packed to {}", output_path.display());
+                    self.packer_state.status = format!("Packed to {}", output_path.display());
                     self.clear_error_message();
                 }
                 PackOutcome::Error {
@@ -966,7 +913,9 @@ impl PackerApp {
                     output_path,
                     error,
                 } => {
-                    let message = self.format_pack_error(&folder, &output_path, error);
+                    let message = self
+                        .packer_state
+                        .format_pack_error(&folder, &output_path, error);
                     self.set_error_message(message);
                 }
             }
@@ -975,7 +924,7 @@ impl PackerApp {
 
     #[cfg(test)]
     pub(crate) fn pack_job_active(&self) -> bool {
-        self.pack_job.is_some()
+        self.packer_state.is_pack_running()
     }
 }
 
@@ -1065,7 +1014,7 @@ mod packer_app_tests {
     use tempfile::tempdir;
 
     fn wait_for_pack_completion(app: &mut PackerApp) {
-        while app.pack_job.is_some() {
+        while app.packer_state.pack_job.is_some() {
             thread::sleep(Duration::from_millis(10));
             app.poll_pack_job();
         }
@@ -1085,15 +1034,15 @@ mod packer_app_tests {
         fs::create_dir_all(&project_dir).expect("create project folder");
 
         let mut app = PackerApp::default();
-        app.folder = Some(project_dir.clone());
-        app.folder_base_name = "SAVE".to_string();
-        app.psu_file_base_name.clear();
+        app.packer_state.folder = Some(project_dir.clone());
+        app.packer_state.folder_base_name = "SAVE".to_string();
+        app.packer_state.psu_file_base_name.clear();
 
-        let previous_default = app.default_output_file_name();
+        let previous_default = app.packer_state.default_output_file_name();
         app.metadata_inputs_changed(previous_default);
 
-        assert_eq!(app.psu_file_base_name, "SAVE");
-        assert!(app.output.ends_with("APP_SAVE.psu"));
+        assert_eq!(app.packer_state.psu_file_base_name, "SAVE");
+        assert!(app.packer_state.output.ends_with("APP_SAVE.psu"));
     }
 
     #[test]
@@ -1116,15 +1065,15 @@ mod packer_app_tests {
         write_required_files(&project_dir);
 
         let mut app = PackerApp::default();
-        app.folder = Some(project_dir.clone());
-        app.folder_base_name = "SAVE".to_string();
-        app.psu_file_base_name.clear();
-        app.selected_prefix = SasPrefix::App;
-        app.output.clear();
+        app.packer_state.folder = Some(project_dir.clone());
+        app.packer_state.folder_base_name = "SAVE".to_string();
+        app.packer_state.psu_file_base_name.clear();
+        app.packer_state.selected_prefix = SasPrefix::App;
+        app.packer_state.output.clear();
 
         let result = app.prepare_pack_inputs();
         assert!(result.is_some(), "inputs should prepare successfully");
-        assert!(app.output.ends_with("APP_SAVE.psu"));
+        assert!(app.packer_state.output.ends_with("APP_SAVE.psu"));
     }
 
     #[test]
@@ -1134,32 +1083,32 @@ mod packer_app_tests {
         fs::create_dir_all(&project_dir).expect("create project folder");
 
         let mut app = PackerApp::default();
-        app.folder = Some(project_dir);
-        app.folder_base_name = "SAVE".to_string();
-        app.psu_file_base_name = "SAVE".to_string();
-        app.selected_prefix = SasPrefix::App;
-        app.output = workspace.path().join("output.psu").display().to_string();
+        app.packer_state.folder = Some(project_dir);
+        app.packer_state.folder_base_name = "SAVE".to_string();
+        app.packer_state.psu_file_base_name = "SAVE".to_string();
+        app.packer_state.selected_prefix = SasPrefix::App;
+        app.packer_state.output = workspace.path().join("output.psu").display().to_string();
 
         app.handle_pack_request();
 
         assert!(
-            app.pending_pack_action.is_some(),
+            app.packer_state.pending_pack_action.is_some(),
             "confirmation should be pending"
         );
         assert!(
-            !app.missing_required_project_files.is_empty(),
+            !app.packer_state.missing_required_project_files.is_empty(),
             "missing files should be tracked"
         );
 
-        let missing_before = app.missing_required_project_files.clone();
+        let missing_before = app.packer_state.missing_required_project_files.clone();
         app.cancel_pending_pack_action();
 
         assert!(
-            app.pending_pack_action.is_none(),
+            app.packer_state.pending_pack_action.is_none(),
             "pending confirmation cleared"
         );
         assert_eq!(
-            app.missing_required_project_files, missing_before,
+            app.packer_state.missing_required_project_files, missing_before,
             "warning about missing files remains visible"
         );
     }
@@ -1171,27 +1120,33 @@ mod packer_app_tests {
         fs::create_dir_all(&project_dir).expect("create project folder");
 
         let mut app = PackerApp::default();
-        app.folder = Some(project_dir);
-        app.folder_base_name = "SAVE".to_string();
-        app.psu_file_base_name = "SAVE".to_string();
-        app.selected_prefix = SasPrefix::App;
-        app.output = workspace.path().join("output.psu").display().to_string();
+        app.packer_state.folder = Some(project_dir);
+        app.packer_state.folder_base_name = "SAVE".to_string();
+        app.packer_state.psu_file_base_name = "SAVE".to_string();
+        app.packer_state.selected_prefix = SasPrefix::App;
+        app.packer_state.output = workspace.path().join("output.psu").display().to_string();
 
         app.handle_pack_request();
         assert!(
-            app.pending_pack_action.is_some(),
+            app.packer_state.pending_pack_action.is_some(),
             "confirmation should be pending"
         );
         assert!(!app.test_pack_job_started);
 
         app.confirm_pending_pack_action();
 
-        assert!(app.pending_pack_action.is_none(), "confirmation accepted");
+        assert!(
+            app.packer_state.pending_pack_action.is_none(),
+            "confirmation accepted"
+        );
         assert!(
             app.test_pack_job_started,
             "pack job should start after acceptance"
         );
-        assert!(app.pack_job.is_some(), "pack job handle should be created");
+        assert!(
+            app.packer_state.pack_job.is_some(),
+            "pack job handle should be created"
+        );
 
         wait_for_pack_completion(&mut app);
     }
@@ -1207,20 +1162,26 @@ mod packer_app_tests {
         fs::write(&existing_output, b"old").expect("create placeholder output");
 
         let mut app = PackerApp::default();
-        app.folder = Some(project_dir);
-        app.folder_base_name = "SAVE".to_string();
-        app.psu_file_base_name = "SAVE".to_string();
-        app.selected_prefix = SasPrefix::App;
-        app.output = existing_output.display().to_string();
-        app.loaded_psu_path = Some(existing_output.clone());
+        app.packer_state.folder = Some(project_dir);
+        app.packer_state.folder_base_name = "SAVE".to_string();
+        app.packer_state.psu_file_base_name = "SAVE".to_string();
+        app.packer_state.selected_prefix = SasPrefix::App;
+        app.packer_state.output = existing_output.display().to_string();
+        app.packer_state.loaded_psu_path = Some(existing_output.clone());
 
         app.handle_update_psu_request();
 
-        assert!(app.pack_job.is_some(), "pack job should start");
+        assert!(app.packer_state.pack_job.is_some(), "pack job should start");
         wait_for_pack_completion(&mut app);
 
-        assert!(app.error_message.is_none(), "no error after update");
-        assert!(app.status.contains(&existing_output.display().to_string()));
+        assert!(
+            app.packer_state.error_message.is_none(),
+            "no error after update"
+        );
+        assert!(app
+            .packer_state
+            .status
+            .contains(&existing_output.display().to_string()));
         let metadata = fs::metadata(&existing_output).expect("output metadata");
         assert!(metadata.len() > 0, "packed PSU should not be empty");
     }
@@ -1235,17 +1196,23 @@ mod packer_app_tests {
         let missing_output = workspace.path().join("missing.psu");
 
         let mut app = PackerApp::default();
-        app.folder = Some(project_dir);
-        app.folder_base_name = "SAVE".to_string();
-        app.psu_file_base_name = "SAVE".to_string();
-        app.selected_prefix = SasPrefix::App;
-        app.output = missing_output.display().to_string();
-        app.loaded_psu_path = Some(missing_output.clone());
+        app.packer_state.folder = Some(project_dir);
+        app.packer_state.folder_base_name = "SAVE".to_string();
+        app.packer_state.psu_file_base_name = "SAVE".to_string();
+        app.packer_state.selected_prefix = SasPrefix::App;
+        app.packer_state.output = missing_output.display().to_string();
+        app.packer_state.loaded_psu_path = Some(missing_output.clone());
 
         app.handle_update_psu_request();
 
-        assert!(app.pack_job.is_none(), "pack job should not start");
-        let message = app.error_message.expect("error message expected");
+        assert!(
+            app.packer_state.pack_job.is_none(),
+            "pack job should not start"
+        );
+        let message = app
+            .packer_state
+            .error_message
+            .expect("error message expected");
         assert!(message.contains("does not exist"));
     }
 
@@ -1268,34 +1235,34 @@ mod packer_app_tests {
             .expect("pack source PSU");
 
         let mut app = PackerApp::default();
-        app.folder = None;
-        app.folder_base_name = "SAVE".to_string();
-        app.psu_file_base_name = "SAVE".to_string();
-        app.selected_prefix = SasPrefix::App;
-        app.output = existing_output.display().to_string();
-        app.loaded_psu_path = Some(existing_output.clone());
+        app.packer_state.folder = None;
+        app.packer_state.folder_base_name = "SAVE".to_string();
+        app.packer_state.psu_file_base_name = "SAVE".to_string();
+        app.packer_state.selected_prefix = SasPrefix::App;
+        app.packer_state.output = existing_output.display().to_string();
+        app.packer_state.loaded_psu_path = Some(existing_output.clone());
 
         app.handle_update_psu_request();
 
-        assert!(app.pack_job.is_some(), "pack job should start");
+        assert!(app.packer_state.pack_job.is_some(), "pack job should start");
         assert_ne!(
-            app.error_message.as_deref(),
+            app.packer_state.error_message.as_deref(),
             Some("Please select a folder"),
             "loaded PSU update should not emit folder selection error"
         );
         assert!(
-            app.folder.is_none(),
+            app.packer_state.folder.is_none(),
             "temporary workspace should not persist as project folder"
         );
 
         wait_for_pack_completion(&mut app);
 
         assert!(
-            app.error_message.is_none(),
+            app.packer_state.error_message.is_none(),
             "no error after updating loaded PSU"
         );
         assert!(
-            app.temp_workspace.is_none(),
+            app.packer_state.temp_workspace.is_none(),
             "temporary workspace should be cleaned up"
         );
     }
@@ -1858,7 +1825,7 @@ mod tests {
                     ui,
                     "psu.toml",
                     true,
-                    app.folder.is_some(),
+                    app.packer_state.folder.is_some(),
                     &mut app.psu_toml_editor,
                 );
                 assert!(!actions.save_clicked);
@@ -1876,8 +1843,12 @@ mod tests {
 
         let _ = ctx.run(Default::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                let actions =
-                    title_cfg_form_ui(ui, true, app.folder.is_some(), &mut app.title_cfg_editor);
+                let actions = title_cfg_form_ui(
+                    ui,
+                    true,
+                    app.packer_state.folder.is_some(),
+                    &mut app.title_cfg_editor,
+                );
                 assert!(!actions.save_clicked);
                 assert!(!actions.apply_clicked);
             });
@@ -1894,7 +1865,7 @@ mod tests {
                     ui,
                     "psu.toml",
                     true,
-                    app.folder.is_some(),
+                    app.packer_state.folder.is_some(),
                     &mut app.psu_toml_editor,
                 );
                 assert!(!actions.save_clicked);
@@ -1928,15 +1899,18 @@ linebreak_pos = 5
 
         assert!(app.apply_psu_toml_edits());
 
-        assert_eq!(app.selected_prefix, SasPrefix::App);
-        assert_eq!(app.folder_base_name, "Custom Save");
-        assert_eq!(app.psu_file_base_name, "Custom Save");
-        assert_eq!(app.include_files, vec!["BOOT.ELF", "DATA.BIN"]);
-        assert_eq!(app.exclude_files, vec!["IGNORE.DAT"]);
+        assert_eq!(app.packer_state.selected_prefix, SasPrefix::App);
+        assert_eq!(app.packer_state.folder_base_name, "Custom Save");
+        assert_eq!(app.packer_state.psu_file_base_name, "Custom Save");
+        assert_eq!(app.packer_state.include_files, vec!["BOOT.ELF", "DATA.BIN"]);
+        assert_eq!(app.packer_state.exclude_files, vec!["IGNORE.DAT"]);
         let expected_timestamp =
             NaiveDateTime::parse_from_str(timestamp, gui_core::state::TIMESTAMP_FORMAT).unwrap();
-        assert_eq!(app.timestamp, Some(expected_timestamp));
-        assert_eq!(app.timestamp_strategy, TimestampStrategy::Manual);
+        assert_eq!(app.packer_state.timestamp, Some(expected_timestamp));
+        assert_eq!(
+            app.packer_state.timestamp_strategy,
+            TimestampStrategy::Manual
+        );
         assert!(app.icon_sys_enabled);
         assert!(matches!(
             app.icon_sys_state.flag_selection,
@@ -2122,6 +2096,7 @@ linebreak_pos = 5
 
         assert!(!app.apply_psu_toml_edits());
         assert!(app
+            .packer_state
             .error_message
             .as_ref()
             .is_some_and(|message| message.contains("Failed to")));
@@ -2135,8 +2110,8 @@ linebreak_pos = 5
         app.title_cfg_editor.modified = true;
 
         assert!(app.apply_title_cfg_edits());
-        assert_eq!(app.status, "Validated title.cfg contents.");
-        assert!(app.error_message.is_none());
+        assert_eq!(app.packer_state.status, "Validated title.cfg contents.");
+        assert!(app.packer_state.error_message.is_none());
     }
 
     #[test]
@@ -2148,6 +2123,7 @@ linebreak_pos = 5
 
         assert!(!app.apply_title_cfg_edits());
         assert!(app
+            .packer_state
             .error_message
             .as_ref()
             .is_some_and(|message| message.contains("missing mandatory")));
@@ -2162,68 +2138,69 @@ linebreak_pos = 5
         }
 
         let mut app = PackerApp::default();
-        app.folder = Some(temp_dir.path().to_path_buf());
+        app.packer_state.folder = Some(temp_dir.path().to_path_buf());
 
-        app.refresh_missing_required_project_files();
-        assert!(app.missing_required_project_files.is_empty());
+        app.packer_state.refresh_missing_required_project_files();
+        assert!(app.packer_state.missing_required_project_files.is_empty());
 
         for file in REQUIRED_PROJECT_FILES {
             let path = temp_dir.path().join(file);
             fs::remove_file(&path).expect("remove required file");
-            app.refresh_missing_required_project_files();
+            app.packer_state.refresh_missing_required_project_files();
             assert_eq!(
-                app.missing_required_project_files,
+                app.packer_state.missing_required_project_files,
                 vec![MissingRequiredFile::always(file)]
             );
             fs::write(&path, b"placeholder").expect("restore required file");
-            app.refresh_missing_required_project_files();
-            assert!(app.missing_required_project_files.is_empty());
+            app.packer_state.refresh_missing_required_project_files();
+            assert!(app.packer_state.missing_required_project_files.is_empty());
         }
 
         // Optional files should only be required when their features are enabled.
-        app.include_files.push("BOOT.ELF".to_string());
-        app.refresh_missing_required_project_files();
+        app.packer_state.include_files.push("BOOT.ELF".to_string());
+        app.packer_state.refresh_missing_required_project_files();
         assert_eq!(
-            app.missing_required_project_files,
+            app.packer_state.missing_required_project_files,
             vec![MissingRequiredFile::included("BOOT.ELF")]
         );
 
         let boot_path = temp_dir.path().join("BOOT.ELF");
         fs::write(&boot_path, b"boot").expect("create BOOT.ELF");
-        app.refresh_missing_required_project_files();
-        assert!(app.missing_required_project_files.is_empty());
+        app.packer_state.refresh_missing_required_project_files();
+        assert!(app.packer_state.missing_required_project_files.is_empty());
 
         let timestamp_path = temp_dir.path().join(TIMESTAMP_RULES_FILE);
         if timestamp_path.exists() {
             fs::remove_file(&timestamp_path).expect("remove timestamp rules");
         }
 
-        app.timestamp_strategy = TimestampStrategy::SasRules;
-        app.refresh_missing_required_project_files();
-        assert!(app.missing_required_project_files.is_empty());
+        app.packer_state.timestamp_strategy = TimestampStrategy::SasRules;
+        app.packer_state.refresh_missing_required_project_files();
+        assert!(app.packer_state.missing_required_project_files.is_empty());
 
         app.mark_timestamp_rules_modified();
-        app.refresh_missing_required_project_files();
+        app.packer_state.refresh_missing_required_project_files();
         assert_eq!(
-            app.missing_required_project_files,
+            app.packer_state.missing_required_project_files,
             vec![MissingRequiredFile::timestamp_rules()]
         );
 
-        app.timestamp_rules_modified = false;
-        app.timestamp_rules_loaded_from_file = false;
+        app.packer_state.timestamp_rules_modified = false;
+        app.packer_state.timestamp_rules_loaded_from_file = false;
 
         fs::write(&timestamp_path, b"{}").expect("create timestamp rules");
-        app.load_timestamp_rules_from_folder(temp_dir.path());
+        app.packer_state
+            .load_timestamp_rules_from_folder(temp_dir.path());
         fs::remove_file(&timestamp_path).expect("remove timestamp rules");
-        app.refresh_missing_required_project_files();
+        app.packer_state.refresh_missing_required_project_files();
         assert_eq!(
-            app.missing_required_project_files,
+            app.packer_state.missing_required_project_files,
             vec![MissingRequiredFile::timestamp_rules()]
         );
 
         fs::write(&timestamp_path, b"{}").expect("restore timestamp rules");
-        app.refresh_missing_required_project_files();
-        assert!(app.missing_required_project_files.is_empty());
+        app.packer_state.refresh_missing_required_project_files();
+        assert!(app.packer_state.missing_required_project_files.is_empty());
     }
 
     #[test]
@@ -2235,28 +2212,29 @@ linebreak_pos = 5
         }
 
         let mut app = PackerApp::default();
-        app.folder = Some(temp_dir.path().to_path_buf());
-        app.folder_base_name = "Sample".to_string();
-        app.psu_file_base_name = "Sample".to_string();
-        app.output = temp_dir.path().join("Sample.psu").display().to_string();
+        app.packer_state.folder = Some(temp_dir.path().to_path_buf());
+        app.packer_state.folder_base_name = "Sample".to_string();
+        app.packer_state.psu_file_base_name = "Sample".to_string();
+        app.packer_state.output = temp_dir.path().join("Sample.psu").display().to_string();
 
         for file in REQUIRED_PROJECT_FILES {
             let path = temp_dir.path().join(file);
             fs::remove_file(&path).expect("remove required file");
             app.handle_pack_request();
             let error = app
+                .packer_state
                 .error_message
                 .as_ref()
                 .expect("missing files should block packing");
             assert!(error.contains(file));
             assert_eq!(
-                app.missing_required_project_files,
+                app.packer_state.missing_required_project_files,
                 vec![MissingRequiredFile::always(file)]
             );
             fs::write(&path, b"placeholder").expect("restore required file");
             app.clear_error_message();
-            app.refresh_missing_required_project_files();
-            assert!(app.missing_required_project_files.is_empty());
+            app.packer_state.refresh_missing_required_project_files();
+            assert!(app.packer_state.missing_required_project_files.is_empty());
         }
 
         // BOOT.ELF becomes required when referenced in the include list.
@@ -2264,34 +2242,35 @@ linebreak_pos = 5
         if boot_path.exists() {
             fs::remove_file(&boot_path).expect("remove BOOT.ELF");
         }
-        app.include_files.push("BOOT.ELF".to_string());
+        app.packer_state.include_files.push("BOOT.ELF".to_string());
         app.handle_pack_request();
         let error = app
+            .packer_state
             .error_message
             .as_ref()
             .expect("missing BOOT.ELF should block packing");
         assert!(error.contains("BOOT.ELF"));
         assert_eq!(
-            app.missing_required_project_files,
+            app.packer_state.missing_required_project_files,
             vec![MissingRequiredFile::included("BOOT.ELF")]
         );
         fs::write(&boot_path, b"boot").expect("restore BOOT.ELF");
         app.clear_error_message();
-        app.refresh_missing_required_project_files();
-        assert!(app.missing_required_project_files.is_empty());
+        app.packer_state.refresh_missing_required_project_files();
+        assert!(app.packer_state.missing_required_project_files.is_empty());
 
         // Timestamp automation requires timestamp_rules.json when enabled.
         let timestamp_path = temp_dir.path().join(TIMESTAMP_RULES_FILE);
         if timestamp_path.exists() {
             fs::remove_file(&timestamp_path).expect("remove timestamp rules");
         }
-        app.timestamp_strategy = TimestampStrategy::SasRules;
+        app.packer_state.timestamp_strategy = TimestampStrategy::SasRules;
         let result = app.prepare_pack_inputs();
         assert!(
             result.is_some(),
             "timestamp automation should use built-in rules"
         );
-        assert!(app.error_message.is_none());
-        assert!(app.missing_required_project_files.is_empty());
+        assert!(app.packer_state.error_message.is_none());
+        assert!(app.packer_state.missing_required_project_files.is_empty());
     }
 }

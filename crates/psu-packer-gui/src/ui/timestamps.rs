@@ -7,8 +7,8 @@ use crate::{ui::theme, PackerApp, TimestampStrategy, TIMESTAMP_FORMAT};
 pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui) {
     ui.vertical(|ui| {
         let default_timestamp = default_timestamp();
-        let source_timestamp = app.source_timestamp;
-        let planned_timestamp = app.planned_timestamp_for_current_source();
+        let source_timestamp = app.packer_state.source_timestamp;
+        let planned_timestamp = app.packer_state.planned_timestamp_for_current_source();
         let recommended_strategy = recommended_timestamp_strategy(source_timestamp, planned_timestamp);
 
         ui.small(
@@ -16,7 +16,7 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
         );
         ui.add_space(6.0);
 
-        let mut strategy = app.timestamp_strategy;
+        let mut strategy = app.packer_state.timestamp_strategy;
         let recommended_badge = |ui: &mut egui::Ui| {
             let badge_text = egui::RichText::new("Recommended")
                 .color(egui::Color32::WHITE)
@@ -35,7 +35,7 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
                         "No timestamp",
                     );
                     if response.changed()
-                        && app.timestamp_strategy != TimestampStrategy::None
+                        && app.packer_state.timestamp_strategy != TimestampStrategy::None
                         && strategy == TimestampStrategy::None
                     {
                         app.set_timestamp_strategy(strategy);
@@ -60,7 +60,7 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
                         recommended_badge(ui);
                     }
                     if response.changed()
-                        && app.timestamp_strategy != TimestampStrategy::InheritSource
+                        && app.packer_state.timestamp_strategy != TimestampStrategy::InheritSource
                         && strategy == TimestampStrategy::InheritSource
                     {
                         app.set_timestamp_strategy(strategy);
@@ -91,7 +91,7 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
                         recommended_badge(ui);
                     }
                     if response.changed()
-                        && app.timestamp_strategy != TimestampStrategy::SasRules
+                        && app.packer_state.timestamp_strategy != TimestampStrategy::SasRules
                         && strategy == TimestampStrategy::SasRules
                     {
                         app.set_timestamp_strategy(strategy);
@@ -125,7 +125,7 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
                         recommended_badge(ui);
                     }
                     if response.changed()
-                        && app.timestamp_strategy != TimestampStrategy::Manual
+                        && app.packer_state.timestamp_strategy != TimestampStrategy::Manual
                         && strategy == TimestampStrategy::Manual
                     {
                         app.set_timestamp_strategy(strategy);
@@ -135,14 +135,14 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
                 ui.label("• Relies on: Manual date and time you enter here.");
 
                 if strategy == TimestampStrategy::Manual
-                    && app.manual_timestamp.is_none()
+                    && app.packer_state.manual_timestamp.is_none()
                 {
-                    app.manual_timestamp = Some(default_timestamp);
+                    app.packer_state.manual_timestamp = Some(default_timestamp);
                     app.refresh_timestamp_from_strategy();
                 }
 
                 if strategy == TimestampStrategy::Manual {
-                    let mut timestamp = app.manual_timestamp.unwrap_or(default_timestamp);
+                    let mut timestamp = app.packer_state.manual_timestamp.unwrap_or(default_timestamp);
                     let mut date: NaiveDate = timestamp.date();
                     let time = timestamp.time();
                     let mut hour = time.hour();
@@ -185,21 +185,21 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
                     if changed {
                         if let Some(new_time) = NaiveTime::from_hms_opt(hour, minute, second) {
                             timestamp = NaiveDateTime::new(date, new_time);
-                            app.manual_timestamp = Some(timestamp);
+                            app.packer_state.manual_timestamp = Some(timestamp);
                             manual_timestamp_changed = true;
                         }
-                    } else if app.manual_timestamp != Some(timestamp) {
-                        app.manual_timestamp = Some(timestamp);
+                    } else if app.packer_state.manual_timestamp != Some(timestamp) {
+                        app.packer_state.manual_timestamp = Some(timestamp);
                         manual_timestamp_changed = true;
                     }
 
-                    if let Some(ts) = app.manual_timestamp {
+                    if let Some(ts) = app.packer_state.manual_timestamp {
                         ui.small(format!("Selected: {}", ts.format(TIMESTAMP_FORMAT)));
                     }
 
                     if let Some(planned) = planned_timestamp {
                         if ui.button("Copy planned timestamp").clicked() {
-                            app.manual_timestamp = Some(planned);
+                            app.packer_state.manual_timestamp = Some(planned);
                             manual_timestamp_changed = true;
                         }
                     }
@@ -207,7 +207,7 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
             });
         });
 
-        if strategy != app.timestamp_strategy {
+        if strategy != app.packer_state.timestamp_strategy {
             app.set_timestamp_strategy(strategy);
         }
 
@@ -217,7 +217,7 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
 
         ui.add_space(8.0);
 
-        let summary_title = current_strategy_title(app.timestamp_strategy);
+        let summary_title = current_strategy_title(app.packer_state.timestamp_strategy);
         let summary_reason = current_strategy_reason(app, source_timestamp, planned_timestamp);
         let summary_text = format!("Currently using: {summary_title} because {summary_reason}.");
 
@@ -255,7 +255,7 @@ fn availability_text(
 }
 
 fn project_name_text(app: &PackerApp) -> String {
-    let name = app.folder_name();
+    let name = app.packer_state.folder_name();
     if name.trim().is_empty() {
         "not set".to_string()
     } else {
@@ -277,7 +277,7 @@ fn current_strategy_reason(
     source_timestamp: Option<NaiveDateTime>,
     planned_timestamp: Option<NaiveDateTime>,
 ) -> String {
-    match app.timestamp_strategy {
+    match app.packer_state.timestamp_strategy {
         TimestampStrategy::None => {
             "timestamps are intentionally omitted from the archive".to_string()
         }
@@ -292,11 +292,11 @@ fn current_strategy_reason(
             Some(ts) => format!(
                 "SAS rules computed {} for {}",
                 ts.format(TIMESTAMP_FORMAT),
-                app.folder_name()
+                app.packer_state.folder_name()
             ),
             None => "automatic SAS rules could not determine a timestamp".to_string(),
         },
-        TimestampStrategy::Manual => match app.manual_timestamp {
+        TimestampStrategy::Manual => match app.packer_state.manual_timestamp {
             Some(ts) => format!("you entered {}", ts.format(TIMESTAMP_FORMAT)),
             None => "a manual timestamp is required until other data is provided".to_string(),
         },
@@ -305,7 +305,7 @@ fn current_strategy_reason(
 
 pub(crate) fn timestamp_rules_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
     {
-        let state = &mut app.state;
+        let state = &mut app.packer_state;
         let (ui_state, rules) = (&mut state.timestamp_rules_ui, &state.timestamp_rules);
         ui_state.ensure_matches(rules);
     }
@@ -313,18 +313,18 @@ pub(crate) fn timestamp_rules_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
     ui.heading(theme::display_heading_text(ui, "Automatic timestamp rules"));
     ui.small("Adjust deterministic timestamp spacing, category order, and aliases.");
 
-    if let Some(error) = &app.timestamp_rules_error {
+    if let Some(error) = &app.packer_state.timestamp_rules_error {
         ui.add_space(6.0);
         ui.colored_label(egui::Color32::YELLOW, error);
     }
 
-    if let Some(path) = app.timestamp_rules_path() {
+    if let Some(path) = app.packer_state.timestamp_rules_path() {
         ui.label(format!("Configuration file: {}", path.display()));
     } else {
         ui.small("Select a project folder to save these settings alongside psu.toml.");
     }
 
-    if app.timestamp_rules_modified {
+    if app.packer_state.timestamp_rules_modified {
         ui.colored_label(egui::Color32::LIGHT_YELLOW, "Unsaved changes");
     }
 
@@ -334,7 +334,7 @@ pub(crate) fn timestamp_rules_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
         .spacing(egui::vec2(12.0, 6.0))
         .show(ui, |ui| {
             ui.label("Seconds between items");
-            let mut seconds = app.timestamp_rules_ui.seconds_between_items();
+            let mut seconds = app.packer_state.timestamp_rules_ui.seconds_between_items();
             if ui
                 .add(
                     egui::DragValue::new(&mut seconds)
@@ -342,14 +342,17 @@ pub(crate) fn timestamp_rules_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
                         .speed(1.0),
                 )
                 .changed()
-                && app.timestamp_rules_ui.set_seconds_between_items(seconds)
+                && app
+                    .packer_state
+                    .timestamp_rules_ui
+                    .set_seconds_between_items(seconds)
             {
                 app.mark_timestamp_rules_modified();
             }
             ui.end_row();
 
             ui.label("Slots per category");
-            let mut slots = app.timestamp_rules_ui.slots_per_category();
+            let mut slots = app.packer_state.timestamp_rules_ui.slots_per_category();
             if ui
                 .add(
                     egui::DragValue::new(&mut slots)
@@ -357,7 +360,10 @@ pub(crate) fn timestamp_rules_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
                         .speed(10.0),
                 )
                 .changed()
-                && app.timestamp_rules_ui.set_slots_per_category(slots)
+                && app
+                    .packer_state
+                    .timestamp_rules_ui
+                    .set_slots_per_category(slots)
             {
                 app.mark_timestamp_rules_modified();
             }
@@ -373,10 +379,10 @@ pub(crate) fn timestamp_rules_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
     ui.add_space(6.0);
 
     let mut move_request: Option<(usize, MoveDirection)> = None;
-    let category_len = app.timestamp_rules_ui.len();
+    let category_len = app.packer_state.timestamp_rules_ui.len();
 
     for index in 0..category_len {
-        let Some(category) = app.timestamp_rules_ui.category(index) else {
+        let Some(category) = app.packer_state.timestamp_rules_ui.category(index) else {
             continue;
         };
         let key = category.key().to_string();
@@ -415,21 +421,24 @@ pub(crate) fn timestamp_rules_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
                 } else {
                     for alias in &available_aliases {
                         let mut is_selected = app
+                            .packer_state
                             .timestamp_rules_ui
                             .category(index)
                             .map(|category| category.is_alias_selected(alias))
                             .unwrap_or(false);
                         if ui.checkbox(&mut is_selected, alias).changed() {
-                            if app
-                                .timestamp_rules_ui
-                                .set_alias_selected(index, alias, is_selected)
-                            {
+                            if app.packer_state.timestamp_rules_ui.set_alias_selected(
+                                index,
+                                alias,
+                                is_selected,
+                            ) {
                                 aliases_changed = true;
                             }
                         }
                     }
 
-                    if let Some(warning) = app.timestamp_rules_ui.alias_warning(index) {
+                    if let Some(warning) = app.packer_state.timestamp_rules_ui.alias_warning(index)
+                    {
                         ui.colored_label(egui::Color32::from_rgb(229, 115, 115), warning);
                     }
                 }
@@ -444,8 +453,11 @@ pub(crate) fn timestamp_rules_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
 
     if let Some((index, direction)) = move_request {
         let moved = match direction {
-            MoveDirection::Up => app.timestamp_rules_ui.move_category_up(index),
-            MoveDirection::Down => app.timestamp_rules_ui.move_category_down(index),
+            MoveDirection::Up => app.packer_state.timestamp_rules_ui.move_category_up(index),
+            MoveDirection::Down => app
+                .packer_state
+                .timestamp_rules_ui
+                .move_category_down(index),
         };
         if moved {
             app.mark_timestamp_rules_modified();
@@ -458,16 +470,20 @@ pub(crate) fn timestamp_rules_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
             app.reset_timestamp_rules_to_default();
         }
 
-        let save_enabled = app.folder.is_some();
+        let save_enabled = app.packer_state.folder.is_some();
         if ui
             .add_enabled(save_enabled, egui::Button::new("Save"))
             .clicked()
         {
-            match app.save_timestamp_rules() {
+            match app.packer_state.save_timestamp_rules() {
                 Ok(path) => {
-                    app.status = format!("Saved timestamp rules to {}", path.display());
+                    app.packer_state.status =
+                        format!("Saved timestamp rules to {}", path.display());
                     app.clear_error_message();
-                    if matches!(app.timestamp_strategy, TimestampStrategy::SasRules) {
+                    if matches!(
+                        app.packer_state.timestamp_strategy,
+                        TimestampStrategy::SasRules
+                    ) {
                         app.apply_planned_timestamp();
                     }
                 }
@@ -479,9 +495,12 @@ pub(crate) fn timestamp_rules_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
             .add_enabled(save_enabled, egui::Button::new("Reload from disk"))
             .clicked()
         {
-            if let Some(folder) = app.folder.clone() {
-                app.load_timestamp_rules_from_folder(&folder);
-                if matches!(app.timestamp_strategy, TimestampStrategy::SasRules) {
+            if let Some(folder) = app.packer_state.folder.clone() {
+                app.packer_state.load_timestamp_rules_from_folder(&folder);
+                if matches!(
+                    app.packer_state.timestamp_strategy,
+                    TimestampStrategy::SasRules
+                ) {
                     app.apply_planned_timestamp();
                 }
             }
@@ -514,8 +533,8 @@ mod tests {
             .unwrap()
             .and_hms_opt(3, 4, 5)
             .unwrap();
-        app.source_timestamp = Some(source);
-        app.timestamp_strategy = TimestampStrategy::InheritSource;
+        app.packer_state.source_timestamp = Some(source);
+        app.packer_state.timestamp_strategy = TimestampStrategy::InheritSource;
         app.refresh_timestamp_from_strategy();
 
         let rendered = render_metadata_text(&mut app);
@@ -531,10 +550,10 @@ mod tests {
     #[test]
     fn summary_references_planned_when_using_sas_rules() {
         let mut app = PackerApp::default();
-        app.source_timestamp = None;
-        app.selected_prefix = SasPrefix::App;
-        app.folder_base_name = "TEST".to_string();
-        app.timestamp_strategy = TimestampStrategy::SasRules;
+        app.packer_state.source_timestamp = None;
+        app.packer_state.selected_prefix = SasPrefix::App;
+        app.packer_state.folder_base_name = "TEST".to_string();
+        app.packer_state.timestamp_strategy = TimestampStrategy::SasRules;
         app.refresh_timestamp_from_strategy();
 
         let rendered = render_metadata_text(&mut app);
@@ -548,13 +567,13 @@ mod tests {
     #[test]
     fn manual_summary_updates_after_manual_timestamp_change() {
         let mut app = PackerApp::default();
-        app.source_timestamp = None;
-        app.timestamp_strategy = TimestampStrategy::Manual;
+        app.packer_state.source_timestamp = None;
+        app.packer_state.timestamp_strategy = TimestampStrategy::Manual;
         let initial = NaiveDate::from_ymd_opt(2024, 5, 6)
             .unwrap()
             .and_hms_opt(7, 8, 9)
             .unwrap();
-        app.manual_timestamp = Some(initial);
+        app.packer_state.manual_timestamp = Some(initial);
         app.refresh_timestamp_from_strategy();
 
         let rendered = render_metadata_text(&mut app);
@@ -563,7 +582,7 @@ mod tests {
         ));
 
         let updated = initial + Duration::minutes(5);
-        app.manual_timestamp = Some(updated);
+        app.packer_state.manual_timestamp = Some(updated);
         app.refresh_timestamp_from_strategy();
 
         let rerendered = render_metadata_text(&mut app);
