@@ -5,12 +5,16 @@ use std::{
 };
 
 use crate::ui;
+use crate::ui::pack_controls::ListKind;
 use crate::ui::theme;
 use eframe::egui::{self, Widget};
 #[cfg(test)]
 use gui_core::state::{SasPrefix, REQUIRED_PROJECT_FILES, TIMESTAMP_RULES_FILE};
 use gui_core::{
-    actions::{Action, ActionDispatcher, MetadataTarget},
+    actions::{
+        Action, ActionDispatcher, EditorAction, FileListAction, FileListKind, IconSysAction,
+        MetadataAction, MetadataTarget, TimestampAction, TimestampStrategyAction,
+    },
     state::{
         MissingRequiredFile, PackErrorMessage, PackOutcome, PackPreparation, PackerState,
         PendingPackAction, TimestampStrategy,
@@ -937,7 +941,24 @@ impl ActionDispatcher for PackerApp {
             | Action::CreateMetadataTemplate(MetadataTarget::PsuToml) => true,
             #[cfg(not(feature = "psu-toml-editor"))]
             Action::EditMetadata(MetadataTarget::PsuToml)
-            | Action::CreateMetadataTemplate(MetadataTarget::PsuToml) => false,
+            | Action::CreateMetadataTemplate(MetadataTarget::PsuToml)
+            | Action::OpenEditor(EditorAction::PsuToml) => false,
+            #[cfg(feature = "psu-toml-editor")]
+            Action::OpenEditor(EditorAction::PsuToml) => true,
+            Action::FileList(FileListAction::Browse(_)) => self.packer_state.folder.is_some(),
+            Action::FileList(FileListAction::RemoveSelected(kind)) => match kind {
+                FileListKind::Include => self.packer_state.selected_include.is_some(),
+                FileListKind::Exclude => self.packer_state.selected_exclude.is_some(),
+            },
+            Action::IconSys(IconSysAction::UseExisting) => {
+                self.icon_sys_enabled && self.icon_sys_existing.is_some()
+            }
+            Action::IconSys(IconSysAction::GenerateNew)
+            | Action::IconSys(IconSysAction::Disable) => self.icon_sys_enabled,
+            Action::IconSys(IconSysAction::ClearPreset)
+            | Action::IconSys(IconSysAction::ResetFields) => {
+                self.icon_sys_enabled && !self.icon_sys_use_existing
+            }
             _ => true,
         }
     }
@@ -970,6 +991,129 @@ impl ActionDispatcher for PackerApp {
             Action::CreateMetadataTemplate(MetadataTarget::PsuToml) => {
                 self.create_psu_toml_from_template();
             }
+            Action::OpenEditor(target) => match target {
+                EditorAction::PsuSettings => self.open_psu_settings_tab(),
+                EditorAction::PsuToml => {
+                    #[cfg(feature = "psu-toml-editor")]
+                    {
+                        self.open_psu_toml_tab();
+                    }
+                }
+                EditorAction::TitleCfg => self.open_title_cfg_tab(),
+                EditorAction::IconSys => self.open_icon_sys_tab(),
+                EditorAction::TimestampAutomation => self.open_timestamp_auto_tab(),
+            },
+            Action::Metadata(MetadataAction::ResetFields) => {
+                self.reset_metadata_fields();
+                self.refresh_psu_toml_editor();
+            }
+            Action::Timestamp(timestamp_action) => match timestamp_action {
+                TimestampAction::SelectStrategy(strategy_action) => {
+                    let strategy = match strategy_action {
+                        TimestampStrategyAction::None => TimestampStrategy::None,
+                        TimestampStrategyAction::InheritSource => TimestampStrategy::InheritSource,
+                        TimestampStrategyAction::SasRules => TimestampStrategy::SasRules,
+                        TimestampStrategyAction::Manual => TimestampStrategy::Manual,
+                    };
+                    self.set_timestamp_strategy(strategy);
+                }
+                TimestampAction::RefreshFromStrategy => {
+                    self.refresh_timestamp_from_strategy();
+                }
+                TimestampAction::SyncAfterSourceUpdate => {
+                    self.sync_timestamp_after_source_update();
+                }
+                TimestampAction::ApplyPlannedTimestamp => {
+                    self.apply_planned_timestamp();
+                }
+                TimestampAction::ResetRulesToDefault => {
+                    self.reset_timestamp_rules_to_default();
+                }
+            },
+            Action::FileList(file_action) => {
+                let list_kind = |kind: FileListKind| match kind {
+                    FileListKind::Include => ListKind::Include,
+                    FileListKind::Exclude => ListKind::Exclude,
+                };
+
+                match file_action {
+                    FileListAction::Browse(kind) => {
+                        if self.handle_add_file(list_kind(kind)) {
+                            self.refresh_psu_toml_editor();
+                        }
+                    }
+                    FileListAction::ManualAdd(kind) => {
+                        let value = match kind {
+                            FileListKind::Include => {
+                                self.packer_state.include_manual_entry.trim().to_string()
+                            }
+                            FileListKind::Exclude => {
+                                self.packer_state.exclude_manual_entry.trim().to_string()
+                            }
+                        };
+
+                        if !value.is_empty()
+                            && self.handle_add_file_from_entry(list_kind(kind), &value)
+                        {
+                            match kind {
+                                FileListKind::Include => {
+                                    self.packer_state.include_manual_entry.clear();
+                                }
+                                FileListKind::Exclude => {
+                                    self.packer_state.exclude_manual_entry.clear();
+                                }
+                            }
+                            self.refresh_psu_toml_editor();
+                        }
+                    }
+                    FileListAction::RemoveSelected(kind) => {
+                        if self.handle_remove_file(list_kind(kind)) {
+                            self.refresh_psu_toml_editor();
+                        }
+                    }
+                }
+            }
+            Action::IconSys(icon_action) => match icon_action {
+                IconSysAction::Enable => {
+                    if !self.icon_sys_enabled {
+                        self.icon_sys_enabled = true;
+                        self.refresh_psu_toml_editor();
+                    }
+                }
+                IconSysAction::Disable => {
+                    if self.icon_sys_enabled {
+                        self.reset_icon_sys_fields();
+                        self.refresh_psu_toml_editor();
+                    }
+                }
+                IconSysAction::UseExisting => {
+                    if let Some(existing) = self.icon_sys_existing.clone() {
+                        self.icon_sys_enabled = true;
+                        self.icon_sys_use_existing = true;
+                        self.apply_icon_sys_file(&existing);
+                        self.refresh_psu_toml_editor();
+                    }
+                }
+                IconSysAction::GenerateNew => {
+                    if self.icon_sys_use_existing {
+                        self.icon_sys_use_existing = false;
+                        self.refresh_psu_toml_editor();
+                    } else if !self.icon_sys_enabled {
+                        self.icon_sys_enabled = true;
+                        self.refresh_psu_toml_editor();
+                    }
+                }
+                IconSysAction::ClearPreset => {
+                    if self.icon_sys_enabled && !self.icon_sys_use_existing {
+                        self.clear_icon_sys_preset();
+                        self.refresh_psu_toml_editor();
+                    }
+                }
+                IconSysAction::ResetFields => {
+                    self.reset_icon_sys_fields();
+                    self.refresh_psu_toml_editor();
+                }
+            },
             _ => {}
         }
     }
@@ -977,7 +1121,8 @@ impl ActionDispatcher for PackerApp {
     fn supports_action(&self, action: Action) -> bool {
         match action {
             Action::EditMetadata(MetadataTarget::PsuToml)
-            | Action::CreateMetadataTemplate(MetadataTarget::PsuToml) => {
+            | Action::CreateMetadataTemplate(MetadataTarget::PsuToml)
+            | Action::OpenEditor(EditorAction::PsuToml) => {
                 cfg!(feature = "psu-toml-editor")
             }
             Action::AddFiles

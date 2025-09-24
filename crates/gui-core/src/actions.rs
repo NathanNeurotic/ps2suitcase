@@ -8,6 +8,60 @@ pub enum MetadataTarget {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum EditorAction {
+    PsuSettings,
+    PsuToml,
+    TitleCfg,
+    IconSys,
+    TimestampAutomation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MetadataAction {
+    ResetFields,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TimestampStrategyAction {
+    None,
+    InheritSource,
+    SasRules,
+    Manual,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TimestampAction {
+    SelectStrategy(TimestampStrategyAction),
+    RefreshFromStrategy,
+    SyncAfterSourceUpdate,
+    ApplyPlannedTimestamp,
+    ResetRulesToDefault,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FileListKind {
+    Include,
+    Exclude,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FileListAction {
+    Browse(FileListKind),
+    ManualAdd(FileListKind),
+    RemoveSelected(FileListKind),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum IconSysAction {
+    Enable,
+    Disable,
+    UseExisting,
+    GenerateNew,
+    ClearPreset,
+    ResetFields,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Action {
     OpenProject,
     PackPsu,
@@ -17,6 +71,11 @@ pub enum Action {
     EditMetadata(MetadataTarget),
     CreateMetadataTemplate(MetadataTarget),
     OpenSettings,
+    OpenEditor(EditorAction),
+    Metadata(MetadataAction),
+    Timestamp(TimestampAction),
+    FileList(FileListAction),
+    IconSys(IconSysAction),
 }
 
 pub trait ActionDispatcher {
