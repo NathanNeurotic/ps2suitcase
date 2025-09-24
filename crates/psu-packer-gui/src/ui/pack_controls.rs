@@ -318,28 +318,56 @@ impl From<FileListKind> for ListKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TimestampStrategy;
     use chrono::NaiveDate;
+    use gui_core::actions::{
+        Action, ActionDescriptor, FileListAction, FileListKind, IconSysAction, TimestampAction,
+        TimestampStrategyAction,
+    };
     use ps2_filetypes::sjis;
     use std::path::PathBuf;
 
-    #[test]
-    fn config_from_state_appends_psu_toml_once() {
+    fn dispatch_action(app: &mut PackerApp, descriptor: &ActionDescriptor) {
+        let action = descriptor.action.clone();
+        assert!(app.supports_action(action.clone()));
+        assert!(app.is_action_enabled(action.clone()));
+        app.trigger_action(action);
+    }
+
+    fn set_manual_entry(app: &mut PackerApp, kind: FileListKind, value: &str) {
+        let manual_entry = app.packer_state_mut().manual_entry_mut(kind);
+        manual_entry.clear();
+        manual_entry.push_str(value);
+    }
+
+    fn app_with_prefix(prefix: SasPrefix) -> PackerApp {
         let mut app = PackerApp::default();
         app.packer_state.set_folder_base_name("SAVE".to_string());
         app.packer_state.set_psu_file_base_name("SAVE".to_string());
-        app.packer_state.set_selected_prefix(SasPrefix::App);
+        app.packer_state.set_selected_prefix(prefix);
+        app
+    }
 
-        let config = app.config_from_state().expect("configuration should build");
+    #[test]
+    fn config_from_state_appends_psu_toml_once() {
+        let base_app = app_with_prefix(SasPrefix::App);
+        let config = base_app
+            .config_from_state()
+            .expect("configuration should build");
         assert_eq!(config.exclude, Some(vec!["psu.toml".to_string()]));
         assert!(
-            app.packer_state.exclude_files.is_empty(),
+            base_app.packer_state.exclude_files.is_empty(),
             "building the configuration should not modify the exclude list"
         );
 
-        app.packer_state
-            .set_file_list_entries(FileListKind::Exclude, vec!["DATA.BIN".to_string()]);
-        let config_with_manual_entry = app
+        let manual_add_exclude = ActionDescriptor::new(
+            Action::FileList(FileListAction::ManualAdd(FileListKind::Exclude)),
+            "Add",
+        );
+
+        let mut manual_entry_app = app_with_prefix(SasPrefix::App);
+        set_manual_entry(&mut manual_entry_app, FileListKind::Exclude, "DATA.BIN");
+        dispatch_action(&mut manual_entry_app, &manual_add_exclude);
+        let config_with_manual_entry = manual_entry_app
             .config_from_state()
             .expect("configuration should include manual exclude");
         assert_eq!(
@@ -347,9 +375,10 @@ mod tests {
             Some(vec!["DATA.BIN".to_string(), "psu.toml".to_string()])
         );
 
-        app.packer_state
-            .set_file_list_entries(FileListKind::Exclude, vec!["psu.toml".to_string()]);
-        let config_with_duplicate = app
+        let mut duplicate_app = app_with_prefix(SasPrefix::App);
+        set_manual_entry(&mut duplicate_app, FileListKind::Exclude, "psu.toml");
+        dispatch_action(&mut duplicate_app, &manual_add_exclude);
+        let config_with_duplicate = duplicate_app
             .config_from_state()
             .expect("configuration should handle duplicate entries");
         assert_eq!(
@@ -360,20 +389,34 @@ mod tests {
 
     #[test]
     fn build_config_uses_loaded_psu_edits() {
-        let mut app = PackerApp::default();
+        let mut app = app_with_prefix(SasPrefix::Emu);
         app.packer_state.loaded_psu_path = Some(PathBuf::from("input.psu"));
-        app.packer_state.set_selected_prefix(SasPrefix::Emu);
-        app.packer_state.set_folder_base_name("SAVE".to_string());
-        app.packer_state.set_psu_file_base_name("SAVE".to_string());
         let timestamp = NaiveDate::from_ymd_opt(2023, 11, 14)
             .and_then(|date| date.and_hms_opt(12, 34, 56))
             .expect("valid timestamp");
         app.packer_state.set_manual_timestamp(Some(timestamp));
-        app.set_timestamp_strategy(TimestampStrategy::Manual);
-        app.packer_state
-            .set_file_list_entries(FileListKind::Include, vec!["FILE.BIN".to_string()]);
-        app.packer_state
-            .set_file_list_entries(FileListKind::Exclude, vec!["SKIP.DAT".to_string()]);
+
+        let select_manual_strategy = ActionDescriptor::new(
+            Action::Timestamp(TimestampAction::SelectStrategy(
+                TimestampStrategyAction::Manual,
+            )),
+            "Manual",
+        );
+        dispatch_action(&mut app, &select_manual_strategy);
+
+        let include_manual_add = ActionDescriptor::new(
+            Action::FileList(FileListAction::ManualAdd(FileListKind::Include)),
+            "Add include",
+        );
+        let exclude_manual_add = ActionDescriptor::new(
+            Action::FileList(FileListAction::ManualAdd(FileListKind::Exclude)),
+            "Add exclude",
+        );
+
+        set_manual_entry(&mut app, FileListKind::Include, "FILE.BIN");
+        dispatch_action(&mut app, &include_manual_add);
+        set_manual_entry(&mut app, FileListKind::Exclude, "SKIP.DAT");
+        dispatch_action(&mut app, &exclude_manual_add);
 
         let config = app.build_config().expect("config builds successfully");
         assert_eq!(config.name, "EMU_SAVE");
@@ -387,12 +430,20 @@ mod tests {
 
     #[test]
     fn manual_filter_entries_allowed_without_folder() {
-        let mut app = PackerApp::default();
-        app.packer_state.set_selected_prefix(SasPrefix::App);
-        app.packer_state.set_folder_base_name("SAVE".to_string());
+        let mut app = app_with_prefix(SasPrefix::App);
+        let include_manual_add = ActionDescriptor::new(
+            Action::FileList(FileListAction::ManualAdd(FileListKind::Include)),
+            "Add include",
+        );
+        let exclude_manual_add = ActionDescriptor::new(
+            Action::FileList(FileListAction::ManualAdd(FileListKind::Exclude)),
+            "Add exclude",
+        );
 
-        assert!(app.handle_add_file_from_entry(ListKind::Include, "BOOT.ELF"));
-        assert!(app.handle_add_file_from_entry(ListKind::Exclude, "THUMBS.DB"));
+        set_manual_entry(&mut app, FileListKind::Include, "BOOT.ELF");
+        dispatch_action(&mut app, &include_manual_add);
+        set_manual_entry(&mut app, FileListKind::Exclude, "THUMBS.DB");
+        dispatch_action(&mut app, &exclude_manual_add);
 
         let config = app.build_config().expect("config builds successfully");
         assert_eq!(config.include, Some(vec!["BOOT.ELF".to_string()]));
@@ -404,24 +455,31 @@ mod tests {
 
     #[test]
     fn manual_filter_entries_trim_and_reject_duplicates() {
-        let mut app = PackerApp::default();
+        let mut app = app_with_prefix(SasPrefix::App);
+        let include_manual_add = ActionDescriptor::new(
+            Action::FileList(FileListAction::ManualAdd(FileListKind::Include)),
+            "Add include",
+        );
 
-        assert!(app.handle_add_file_from_entry(ListKind::Include, "  DATA.BIN  "));
+        set_manual_entry(&mut app, FileListKind::Include, "  DATA.BIN  ");
+        dispatch_action(&mut app, &include_manual_add);
         assert_eq!(app.packer_state.include_files, vec!["DATA.BIN"]);
 
-        assert!(!app.handle_add_file_from_entry(ListKind::Include, "DATA.BIN"));
+        let initial_len = app.packer_state.include_files.len();
+        set_manual_entry(&mut app, FileListKind::Include, "DATA.BIN");
+        dispatch_action(&mut app, &include_manual_add);
+        assert_eq!(app.packer_state.include_files.len(), initial_len);
         assert_eq!(app.packer_state.include_files, vec!["DATA.BIN"]);
         assert!(app.packer_state.error_message.is_some());
     }
 
     #[test]
     fn config_from_state_uses_shift_jis_byte_linebreaks() {
-        let mut app = PackerApp::default();
-        app.packer_state.set_selected_prefix(SasPrefix::App);
-        app.packer_state.set_folder_base_name("SAVE".to_string());
-        app.packer_state.set_psu_file_base_name("SAVE".to_string());
-        app.icon_sys_enabled = true;
-        app.icon_sys_use_existing = false;
+        let mut app = app_with_prefix(SasPrefix::App);
+        let enable_descriptor =
+            ActionDescriptor::new(Action::IconSys(IconSysAction::Enable), "Enable");
+        dispatch_action(&mut app, &enable_descriptor);
+
         app.icon_sys_title_line1 = "メモ".to_string();
         app.icon_sys_title_line2 = "リーカード".to_string();
 
