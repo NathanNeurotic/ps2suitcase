@@ -8,7 +8,10 @@ use std::{
     thread,
 };
 
-use crate::actions::{Action, ActionDispatcher, FileListKind, MetadataTarget};
+use crate::actions::{
+    Action, ActionDispatcher, FileListAction, FileListKind, IconSysAction, MetadataAction,
+    MetadataTarget, TimestampAction, TimestampStrategyAction,
+};
 use crate::commands::AppEvent;
 use crate::validation::{sanitize_seconds_between_items, timestamp_rules_equal};
 use psu_packer::sas::{
@@ -1601,6 +1604,11 @@ pub struct AppState {
     pub files: Files,
     pub events: Vec<AppEvent>,
     pub pcsx2_path: String,
+    pub packer: PackerState,
+    pub icon_sys_enabled: bool,
+    pub icon_sys_use_existing: bool,
+    pub icon_sys_has_existing: bool,
+    pub icon_sys_preset: Option<String>,
 }
 
 impl Default for AppState {
@@ -1616,7 +1624,19 @@ impl AppState {
             files: Files::default(),
             events: vec![],
             pcsx2_path: String::new(),
+            packer: PackerState::default(),
+            icon_sys_enabled: false,
+            icon_sys_use_existing: false,
+            icon_sys_has_existing: false,
+            icon_sys_preset: None,
         }
+    }
+
+    pub fn reset_icon_sys_fields(&mut self) {
+        self.icon_sys_enabled = false;
+        self.icon_sys_use_existing = false;
+        self.icon_sys_has_existing = false;
+        self.icon_sys_preset = None;
     }
 
     pub fn open_file(&mut self, file: VirtualFile) {
@@ -1686,6 +1706,32 @@ impl AppState {
 impl ActionDispatcher for AppState {
     fn is_action_enabled(&self, action: Action) -> bool {
         match action {
+            Action::FileList(FileListAction::Browse(_)) => self.opened_folder.is_some(),
+            Action::FileList(FileListAction::ManualAdd(_)) => self.opened_folder.is_some(),
+            Action::FileList(FileListAction::RemoveSelected(kind)) => match kind {
+                FileListKind::Include => {
+                    self.opened_folder.is_some() && self.packer.selected_include.is_some()
+                }
+                FileListKind::Exclude => {
+                    self.opened_folder.is_some() && self.packer.selected_exclude.is_some()
+                }
+            },
+            Action::IconSys(IconSysAction::Enable) => {
+                !self.icon_sys_enabled && self.opened_folder.is_some()
+            }
+            Action::IconSys(IconSysAction::Disable) => {
+                self.icon_sys_enabled && self.opened_folder.is_some()
+            }
+            Action::IconSys(IconSysAction::UseExisting) => {
+                self.icon_sys_enabled && self.icon_sys_has_existing && self.opened_folder.is_some()
+            }
+            Action::IconSys(IconSysAction::GenerateNew) => {
+                self.icon_sys_enabled && self.opened_folder.is_some()
+            }
+            Action::IconSys(IconSysAction::ClearPreset)
+            | Action::IconSys(IconSysAction::ResetFields) => {
+                self.icon_sys_enabled && !self.icon_sys_use_existing && self.opened_folder.is_some()
+            }
             Action::PackPsu
             | Action::ChooseOutputDestination
             | Action::AddFiles
@@ -1695,9 +1741,7 @@ impl ActionDispatcher for AppState {
             | Action::EditMetadata(_)
             | Action::OpenEditor(_)
             | Action::Metadata(_)
-            | Action::Timestamp(_)
-            | Action::FileList(_)
-            | Action::IconSys(_) => self.opened_folder.is_some(),
+            | Action::Timestamp(_) => self.opened_folder.is_some(),
             _ => true,
         }
     }
@@ -1712,13 +1756,88 @@ impl ActionDispatcher for AppState {
             Action::CreateMetadataTemplate(MetadataTarget::PsuToml) => self.create_psu_toml(),
             Action::CreateMetadataTemplate(MetadataTarget::TitleCfg) => self.create_title_cfg(),
             Action::OpenSettings => self.open_settings(),
-            Action::OpenEditor(_)
-            | Action::Metadata(_)
-            | Action::Timestamp(_)
-            | Action::FileList(_)
-            | Action::IconSys(_) => {}
+            Action::Metadata(MetadataAction::ResetFields) => {
+                self.packer.reset_metadata_fields();
+                self.reset_icon_sys_fields();
+            }
+            Action::Timestamp(timestamp_action) => match timestamp_action {
+                TimestampAction::SelectStrategy(strategy_action) => {
+                    let strategy = match strategy_action {
+                        TimestampStrategyAction::None => TimestampStrategy::None,
+                        TimestampStrategyAction::InheritSource => TimestampStrategy::InheritSource,
+                        TimestampStrategyAction::SasRules => TimestampStrategy::SasRules,
+                        TimestampStrategyAction::Manual => TimestampStrategy::Manual,
+                    };
+                    self.packer.set_timestamp_strategy(strategy);
+                }
+                TimestampAction::RefreshFromStrategy => {
+                    self.packer.refresh_timestamp_from_strategy();
+                }
+                TimestampAction::SyncAfterSourceUpdate => {
+                    self.packer.sync_timestamp_after_source_update();
+                }
+                TimestampAction::ApplyPlannedTimestamp => {
+                    self.packer.apply_planned_timestamp();
+                }
+                TimestampAction::ResetRulesToDefault => {
+                    self.packer.reset_timestamp_rules_to_default();
+                }
+            },
+            Action::FileList(file_action) => match file_action {
+                FileListAction::Browse(kind) => {
+                    self.packer.request_file_list_entries(kind);
+                }
+                FileListAction::ManualAdd(kind) => {
+                    let entry = {
+                        let manual = self.packer.manual_entry_mut(kind);
+                        manual.trim().to_string()
+                    };
+                    if !entry.is_empty() {
+                        self.packer.add_file_list_entry(kind, entry);
+                        self.packer.clear_manual_entry(kind);
+                    }
+                }
+                FileListAction::RemoveSelected(kind) => {
+                    if let Some(index) = self.packer.file_list_selection(kind) {
+                        self.packer.remove_file_list_entry(kind, index);
+                    }
+                }
+            },
+            Action::IconSys(icon_action) => match icon_action {
+                IconSysAction::Enable => {
+                    if !self.icon_sys_enabled {
+                        self.icon_sys_enabled = true;
+                    }
+                }
+                IconSysAction::Disable => {
+                    if self.icon_sys_enabled {
+                        self.reset_icon_sys_fields();
+                    }
+                }
+                IconSysAction::UseExisting => {
+                    if self.icon_sys_has_existing {
+                        self.icon_sys_enabled = true;
+                        self.icon_sys_use_existing = true;
+                    }
+                }
+                IconSysAction::GenerateNew => {
+                    self.icon_sys_enabled = true;
+                    self.icon_sys_use_existing = false;
+                }
+                IconSysAction::ClearPreset => {
+                    if self.icon_sys_enabled && !self.icon_sys_use_existing {
+                        self.icon_sys_preset = None;
+                    }
+                }
+                IconSysAction::ResetFields => {
+                    self.reset_icon_sys_fields();
+                }
+            },
+            Action::OpenEditor(_) => {}
             _ => {}
         }
+        let mut packer_events = self.packer.take_events();
+        self.events.append(&mut packer_events);
     }
 
     fn supports_action(&self, action: Action) -> bool {
@@ -1738,5 +1857,242 @@ impl ActionDispatcher for AppState {
                 | Action::FileList(_)
                 | Action::IconSys(_)
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{DateTime, NaiveDateTime, Utc};
+
+    fn state_with_folder() -> (AppState, TempDir) {
+        let mut state = AppState::new();
+        let workspace = tempdir().expect("create tempdir");
+        let folder = workspace.path().to_path_buf();
+        state.opened_folder = Some(folder.clone());
+        state.packer.folder = Some(folder);
+        (state, workspace)
+    }
+
+    fn naive(secs: i64) -> NaiveDateTime {
+        DateTime::<Utc>::from_timestamp(secs, 0)
+            .expect("construct timestamp")
+            .naive_utc()
+    }
+
+    #[test]
+    fn metadata_reset_fields_clears_metadata_and_icon_state() {
+        let mut state = AppState::new();
+        state.packer.selected_prefix = SasPrefix::Emu;
+        state.packer.folder_base_name = "SAVE".to_string();
+        state.packer.psu_file_base_name = "SAVE".to_string();
+        state.icon_sys_enabled = true;
+        state.icon_sys_use_existing = true;
+        state.icon_sys_has_existing = true;
+        state.icon_sys_preset = Some("preset".to_string());
+
+        state.trigger_action(Action::Metadata(MetadataAction::ResetFields));
+
+        assert_eq!(state.packer.selected_prefix, SasPrefix::App);
+        assert!(state.packer.folder_base_name.is_empty());
+        assert!(state.packer.psu_file_base_name.is_empty());
+        assert!(!state.icon_sys_enabled);
+        assert!(!state.icon_sys_use_existing);
+        assert!(!state.icon_sys_has_existing);
+        assert!(state.icon_sys_preset.is_none());
+    }
+
+    #[test]
+    fn timestamp_select_strategy_updates_strategy_and_timestamp() {
+        let mut state = AppState::new();
+        let manual = naive(1_700_000_000);
+        state.packer.manual_timestamp = Some(manual);
+        state.packer.timestamp_strategy = TimestampStrategy::None;
+        state.packer.timestamp = None;
+
+        state.trigger_action(Action::Timestamp(TimestampAction::SelectStrategy(
+            TimestampStrategyAction::Manual,
+        )));
+
+        assert_eq!(state.packer.timestamp_strategy, TimestampStrategy::Manual);
+        assert_eq!(state.packer.timestamp, Some(manual));
+    }
+
+    #[test]
+    fn timestamp_refresh_from_strategy_recomputes_timestamp() {
+        let mut state = AppState::new();
+        let manual = naive(1_600_000_000);
+        state.packer.timestamp_strategy = TimestampStrategy::Manual;
+        state.packer.manual_timestamp = Some(manual);
+        state.packer.timestamp = None;
+
+        state.trigger_action(Action::Timestamp(TimestampAction::RefreshFromStrategy));
+
+        assert_eq!(state.packer.timestamp, Some(manual));
+    }
+
+    #[test]
+    fn timestamp_sync_after_source_update_promotes_strategy() {
+        let mut state = AppState::new();
+        let source = naive(1_500_000_000);
+        state.packer.timestamp_strategy = TimestampStrategy::None;
+        state.packer.source_timestamp = Some(source);
+
+        state.trigger_action(Action::Timestamp(TimestampAction::SyncAfterSourceUpdate));
+
+        assert_eq!(
+            state.packer.timestamp_strategy,
+            TimestampStrategy::InheritSource
+        );
+        assert_eq!(state.packer.timestamp, Some(source));
+    }
+
+    #[test]
+    fn timestamp_apply_planned_timestamp_uses_rules_strategy() {
+        let mut state = AppState::new();
+        state.packer.folder_base_name = "SAVE".to_string();
+
+        state.trigger_action(Action::Timestamp(TimestampAction::ApplyPlannedTimestamp));
+
+        assert_eq!(state.packer.timestamp_strategy, TimestampStrategy::SasRules);
+    }
+
+    #[test]
+    fn timestamp_reset_rules_to_default_restores_defaults() {
+        let mut state = AppState::new();
+        state.packer.timestamp_rules.seconds_between_items = 99;
+        state.packer.timestamp_rules_modified = true;
+
+        state.trigger_action(Action::Timestamp(TimestampAction::ResetRulesToDefault));
+
+        assert_eq!(
+            state.packer.timestamp_rules.seconds_between_items,
+            TimestampRules::default().seconds_between_items
+        );
+        assert!(state.packer.timestamp_rules_modified);
+        assert!(!state.packer.timestamp_rules_loaded_from_file);
+    }
+
+    #[test]
+    fn file_list_browse_pushes_app_event() {
+        let (mut state, _workspace) = state_with_folder();
+
+        state.trigger_action(Action::FileList(FileListAction::Browse(
+            FileListKind::Include,
+        )));
+
+        assert!(matches!(
+            state.events.as_slice(),
+            [AppEvent::BrowseFileListEntries {
+                kind: FileListKind::Include,
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn file_list_manual_add_consumes_manual_entry() {
+        let (mut state, _workspace) = state_with_folder();
+        state.packer.include_manual_entry = "DATA.BIN".to_string();
+
+        state.trigger_action(Action::FileList(FileListAction::ManualAdd(
+            FileListKind::Include,
+        )));
+
+        assert_eq!(state.packer.include_files, vec!["DATA.BIN".to_string()]);
+        assert!(state.packer.include_manual_entry.is_empty());
+    }
+
+    #[test]
+    fn file_list_remove_selected_drops_entry() {
+        let (mut state, _workspace) = state_with_folder();
+        state.packer.include_files = vec!["A.bin".into(), "B.bin".into()];
+        state.packer.selected_include = Some(0);
+
+        state.trigger_action(Action::FileList(FileListAction::RemoveSelected(
+            FileListKind::Include,
+        )));
+
+        assert_eq!(state.packer.include_files, vec!["B.bin".to_string()]);
+        assert_eq!(state.packer.selected_include, Some(0));
+    }
+
+    #[test]
+    fn icon_sys_enable_sets_flag() {
+        let (mut state, _workspace) = state_with_folder();
+        state.icon_sys_enabled = false;
+
+        state.trigger_action(Action::IconSys(IconSysAction::Enable));
+
+        assert!(state.icon_sys_enabled);
+    }
+
+    #[test]
+    fn icon_sys_disable_resets_fields() {
+        let (mut state, _workspace) = state_with_folder();
+        state.icon_sys_enabled = true;
+        state.icon_sys_use_existing = true;
+        state.icon_sys_has_existing = true;
+        state.icon_sys_preset = Some("preset".to_string());
+
+        state.trigger_action(Action::IconSys(IconSysAction::Disable));
+
+        assert!(!state.icon_sys_enabled);
+        assert!(!state.icon_sys_use_existing);
+        assert!(!state.icon_sys_has_existing);
+        assert!(state.icon_sys_preset.is_none());
+    }
+
+    #[test]
+    fn icon_sys_use_existing_switches_mode() {
+        let (mut state, _workspace) = state_with_folder();
+        state.icon_sys_enabled = true;
+        state.icon_sys_has_existing = true;
+        state.icon_sys_use_existing = false;
+
+        state.trigger_action(Action::IconSys(IconSysAction::UseExisting));
+
+        assert!(state.icon_sys_enabled);
+        assert!(state.icon_sys_use_existing);
+    }
+
+    #[test]
+    fn icon_sys_generate_new_disables_existing_flag() {
+        let (mut state, _workspace) = state_with_folder();
+        state.icon_sys_enabled = true;
+        state.icon_sys_use_existing = true;
+
+        state.trigger_action(Action::IconSys(IconSysAction::GenerateNew));
+
+        assert!(state.icon_sys_enabled);
+        assert!(!state.icon_sys_use_existing);
+    }
+
+    #[test]
+    fn icon_sys_clear_preset_removes_selection() {
+        let (mut state, _workspace) = state_with_folder();
+        state.icon_sys_enabled = true;
+        state.icon_sys_use_existing = false;
+        state.icon_sys_preset = Some("preset".to_string());
+
+        state.trigger_action(Action::IconSys(IconSysAction::ClearPreset));
+
+        assert!(state.icon_sys_preset.is_none());
+    }
+
+    #[test]
+    fn icon_sys_reset_fields_clears_state() {
+        let (mut state, _workspace) = state_with_folder();
+        state.icon_sys_enabled = true;
+        state.icon_sys_use_existing = false;
+        state.icon_sys_has_existing = true;
+        state.icon_sys_preset = Some("preset".to_string());
+
+        state.trigger_action(Action::IconSys(IconSysAction::ResetFields));
+
+        assert!(!state.icon_sys_enabled);
+        assert!(!state.icon_sys_use_existing);
+        assert!(!state.icon_sys_has_existing);
+        assert!(state.icon_sys_preset.is_none());
     }
 }
