@@ -317,9 +317,14 @@ impl eframe::App for PackerApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TIMESTAMP_FORMAT;
+    use crate::{SasPrefix, TIMESTAMP_FORMAT};
     use chrono::NaiveDateTime;
     use eframe::egui;
+    use gui_core::actions::{
+        Action, ActionDescriptor, EditorAction, MetadataAction, TimestampAction,
+        TimestampStrategyAction,
+    };
+    use gui_core::ActionDispatcher;
     use std::{fs, path::Path, thread, time::Duration};
     use tempfile::tempdir;
 
@@ -328,6 +333,13 @@ mod tests {
             let path = folder.join(file);
             fs::write(&path, b"data").expect("write required file");
         }
+    }
+
+    fn dispatch_action(app: &mut PackerApp, descriptor: &ActionDescriptor) {
+        let action = descriptor.action.clone();
+        assert!(app.supports_action(action.clone()));
+        assert!(app.is_action_enabled(action.clone()));
+        app.trigger_action(action);
     }
 
     fn wait_for_pack_completion(app: &mut PackerApp) {
@@ -340,10 +352,17 @@ mod tests {
     #[test]
     fn timestamp_panel_serializes_rules() {
         let mut app = PackerApp::default();
+        let open_timestamp_editor = ActionDescriptor::new(
+            Action::OpenEditor(EditorAction::TimestampAutomation),
+            "Timestamp rules",
+        );
+        dispatch_action(&mut app, &open_timestamp_editor);
         app.packer_state
             .timestamp_rules_ui
             .set_seconds_between_items(8);
-        app.mark_timestamp_rules_modified();
+        app.packer_state
+            .timestamp_rules_ui
+            .apply_to_rules(&mut app.packer_state.timestamp_rules);
 
         let mut panel = TimestampRulesPanel::default();
         let ctx = egui::Context::default();
@@ -369,10 +388,36 @@ mod tests {
         write_required_files(&project_dir);
 
         let mut app = PackerApp::default();
+        app.packer_state.folder = Some(project_dir.clone());
+        app.packer_state.refresh_missing_required_project_files();
         app.packer_state.timestamp = Some(
             NaiveDateTime::parse_from_str("2024-01-01 12:00:00", TIMESTAMP_FORMAT)
                 .expect("parse timestamp"),
         );
+
+        let select_app_prefix = ActionDescriptor::new(
+            Action::Metadata(MetadataAction::SelectPrefix(SasPrefix::App)),
+            "Select prefix",
+        );
+        let set_folder_name = ActionDescriptor::new(
+            Action::Metadata(MetadataAction::SetFolderBaseName("SAVE".to_string())),
+            "Set folder name",
+        );
+        let set_psu_base = ActionDescriptor::new(
+            Action::Metadata(MetadataAction::SetPsuFileBaseName("SAVE".to_string())),
+            "Set PSU base",
+        );
+        let manual_strategy = ActionDescriptor::new(
+            Action::Timestamp(TimestampAction::SelectStrategy(
+                TimestampStrategyAction::Manual,
+            )),
+            "Manual strategy",
+        );
+
+        dispatch_action(&mut app, &select_app_prefix);
+        dispatch_action(&mut app, &set_folder_name);
+        dispatch_action(&mut app, &set_psu_base);
+        dispatch_action(&mut app, &manual_strategy);
 
         let mut panel = TimestampRulesPanel::default();
         let ctx = egui::Context::default();
@@ -383,15 +428,10 @@ mod tests {
         });
 
         let output_path = workspace.path().join("output.psu");
-        let config = psu_packer::Config {
-            name: "APP_TEST".to_string(),
-            timestamp: None,
-            include: None,
-            exclude: None,
-            icon_sys: None,
-        };
+        app.packer_state.output = output_path.display().to_string();
 
-        app.start_pack_job(project_dir, output_path.clone(), config);
+        let pack_descriptor = ActionDescriptor::new(Action::PackPsu, "Pack");
+        dispatch_action(&mut app, &pack_descriptor);
         wait_for_pack_completion(&mut app);
 
         assert!(output_path.exists());
