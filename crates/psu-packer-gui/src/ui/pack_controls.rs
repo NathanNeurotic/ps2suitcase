@@ -6,7 +6,10 @@ use crate::{
     ui::{project_requirements_checklist, theme},
     PackerApp, SasPrefix, ICON_SYS_TITLE_CHAR_LIMIT, REQUIRED_PROJECT_FILES,
 };
-use gui_core::{actions::FileListKind, TimestampStrategy};
+use gui_core::{
+    actions::{self, Action, ActionDescriptor, FileListAction, FileListKind, MetadataAction},
+    ActionDispatcher,
+};
 use ps2_filetypes::sjis;
 
 pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
@@ -14,7 +17,6 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
     ui.group(|ui| {
         ui.heading(theme::display_heading_text(ui, "Metadata"));
         ui.small("Edit PSU metadata before or after selecting a folder.");
-        let mut metadata_changed = false;
 
         egui::Grid::new("metadata_grid")
             .num_columns(2)
@@ -38,9 +40,9 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
                     .inner
                     .unwrap_or(false);
                 if prefix_changed && selected_prefix != app.packer_state.selected_prefix {
-                    if app.packer_state.set_selected_prefix(selected_prefix) {
-                        metadata_changed = true;
-                    }
+                    app.trigger_action(Action::Metadata(MetadataAction::SelectPrefix(
+                        selected_prefix,
+                    )));
                 }
                 ui.end_row();
 
@@ -56,9 +58,9 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
                 });
                 let mut folder_base_name = app.packer_state.folder_base_name.clone();
                 if ui.text_edit_singleline(&mut folder_base_name).changed() {
-                    if app.packer_state.set_folder_base_name(folder_base_name) {
-                        metadata_changed = true;
-                    }
+                    app.trigger_action(Action::Metadata(MetadataAction::SetFolderBaseName(
+                        folder_base_name,
+                    )));
                 }
                 ui.end_row();
 
@@ -83,9 +85,9 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
                     })
                     .inner;
                 if psu_response.changed() {
-                    if app.packer_state.set_psu_file_base_name(psu_base) {
-                        metadata_changed = true;
-                    }
+                    app.trigger_action(Action::Metadata(MetadataAction::SetPsuFileBaseName(
+                        psu_base,
+                    )));
                 }
                 ui.end_row();
 
@@ -105,11 +107,6 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
                 ui.small(label);
                 ui.end_row();
             });
-
-        if metadata_changed {
-            app.refresh_psu_toml_editor();
-        }
-
         #[cfg(feature = "psu-toml-editor")]
         if app.packer_state.folder.is_some() && app.psu_toml_sync_blocked {
             ui.add_space(6.0);
@@ -131,55 +128,8 @@ pub(crate) fn file_filters_section(app: &mut PackerApp, ui: &mut egui::Ui) {
             ui.small("No folder selected. Enter file names manually or choose a folder to browse.");
         }
         ui.columns(2, |columns| {
-            let include_actions = {
-                let (files, selected, manual_entry) = app
-                    .packer_state_mut()
-                    .file_list_parts_mut(FileListKind::Include);
-                file_list_ui(
-                    &mut columns[0],
-                    ListKind::Include.label(),
-                    files,
-                    selected,
-                    manual_entry,
-                    folder_selected,
-                )
-            };
-            if include_actions.browse_add && app.handle_add_file(ListKind::Include) {
-                app.refresh_psu_toml_editor();
-            }
-            if let Some(entry) = include_actions.manual_add {
-                if app.handle_add_file_from_entry(ListKind::Include, &entry) {
-                    app.refresh_psu_toml_editor();
-                }
-            }
-            if include_actions.remove && app.handle_remove_file(ListKind::Include) {
-                app.refresh_psu_toml_editor();
-            }
-
-            let exclude_actions = {
-                let (files, selected, manual_entry) = app
-                    .packer_state_mut()
-                    .file_list_parts_mut(FileListKind::Exclude);
-                file_list_ui(
-                    &mut columns[1],
-                    ListKind::Exclude.label(),
-                    files,
-                    selected,
-                    manual_entry,
-                    folder_selected,
-                )
-            };
-            if exclude_actions.browse_add && app.handle_add_file(ListKind::Exclude) {
-                app.refresh_psu_toml_editor();
-            }
-            if let Some(entry) = exclude_actions.manual_add {
-                if app.handle_add_file_from_entry(ListKind::Exclude, &entry) {
-                    app.refresh_psu_toml_editor();
-                }
-            }
-            if exclude_actions.remove && app.handle_remove_file(ListKind::Exclude) {
-                app.refresh_psu_toml_editor();
-            }
+            file_list_ui(app, &mut columns[0], ListKind::Include);
+            file_list_ui(app, &mut columns[1], ListKind::Exclude);
         });
     });
 }
@@ -189,6 +139,9 @@ pub(crate) fn output_section(app: &mut PackerApp, ui: &mut egui::Ui) {
     ui.group(|ui| {
         ui.heading(theme::display_heading_text(ui, "Output"));
         ui.small("Choose where the packed PSU file will be saved.");
+        let choose_destination_descriptor =
+            ActionDescriptor::new(Action::ChooseOutputDestination, "Choose destination");
+        actions::handle_shortcuts(ui.ctx(), app, &[choose_destination_descriptor.clone()]);
         egui::Grid::new("output_grid")
             .num_columns(2)
             .spacing(egui::vec2(12.0, 6.0))
@@ -203,13 +156,8 @@ pub(crate) fn output_section(app: &mut PackerApp, ui: &mut egui::Ui) {
                 ui.end_row();
 
                 ui.label("");
-                if ui
-                    .button("Choose destination")
-                    .on_hover_text("Pick where the PSU file will be created or updated.")
-                    .clicked()
-                {
-                    app.browse_output_destination();
-                }
+                actions::action_button(ui, app, &choose_destination_descriptor)
+                    .on_hover_text("Pick where the PSU file will be created or updated.");
                 ui.end_row();
             });
     });
@@ -258,74 +206,68 @@ pub(crate) fn packaging_section(app: &mut PackerApp, ui: &mut egui::Ui) {
         } else {
             ui.weak("Select a project folder to verify the required assets.");
         }
+        let pack_descriptor = ActionDescriptor::new(Action::PackPsu, "Pack PSU");
+        let update_descriptor = ActionDescriptor::new(Action::UpdatePsu, "Update PSU");
+        let export_descriptor =
+            ActionDescriptor::new(Action::ExportPsuToFolder, "Save as Folder with contents");
+        actions::handle_shortcuts(
+            ui.ctx(),
+            app,
+            &[
+                pack_descriptor.clone(),
+                update_descriptor.clone(),
+                export_descriptor.clone(),
+            ],
+        );
         ui.horizontal_wrapped(|ui| {
-            let pack_button_enabled = !pack_in_progress && !missing_requirements;
-            let mut pack_button =
-                ui.add_enabled(pack_button_enabled, egui::Button::new("Pack PSU"));
+            let pack_response = actions::action_button(ui, app, &pack_descriptor);
             if pack_in_progress {
-                pack_button = pack_button.on_hover_text("Packing in progress…");
+                pack_response.on_hover_text("Packing in progress…");
             } else if missing_requirements {
                 let details = missing_summary
                     .as_ref()
                     .filter(|summary| !summary.trim().is_empty())
                     .cloned()
                     .unwrap_or_else(|| required_asset_list.clone());
-                pack_button = pack_button.on_hover_text(format!(
+                pack_response.on_hover_text(format!(
                     "Add the missing project assets before packing: {details}."
                 ));
             } else {
-                pack_button =
-                    pack_button.on_hover_text("Create the PSU archive using the settings above.");
+                pack_response.on_hover_text("Create the PSU archive using the settings above.");
             }
 
-            if pack_button.clicked() {
-                app.handle_pack_request();
-            }
-
-            let update_button_enabled = !pack_in_progress && !missing_requirements;
-            let mut update_button =
-                ui.add_enabled(update_button_enabled, egui::Button::new("Update PSU"));
+            let update_response = actions::action_button(ui, app, &update_descriptor);
             if pack_in_progress {
-                update_button = update_button.on_hover_text("Packing in progress…");
+                update_response.on_hover_text("Packing in progress…");
             } else if missing_requirements {
                 let details = missing_summary
                     .as_ref()
                     .filter(|summary| !summary.trim().is_empty())
                     .cloned()
                     .unwrap_or_else(|| required_asset_list.clone());
-                update_button = update_button.on_hover_text(format!(
+                update_response.on_hover_text(format!(
                     "Add the missing project assets before updating: {details}."
                 ));
             } else {
-                update_button = update_button
+                update_response
                     .on_hover_text("Repack the current project into the existing PSU file.");
             }
-            if update_button.clicked() {
-                app.handle_update_psu_request();
-            }
 
-            let export_button_enabled = !pack_in_progress && !missing_requirements;
-            let mut export_button = ui.add_enabled(
-                export_button_enabled,
-                egui::Button::new("Save as Folder with contents"),
-            );
+            let export_response = actions::action_button(ui, app, &export_descriptor);
             if pack_in_progress {
-                export_button = export_button.on_hover_text("Packing in progress…");
+                export_response.on_hover_text("Packing in progress…");
             } else if missing_requirements {
                 let details = missing_summary
                     .as_ref()
                     .filter(|summary| !summary.trim().is_empty())
                     .cloned()
                     .unwrap_or_else(|| required_asset_list.clone());
-                export_button = export_button.on_hover_text(format!(
+                export_response.on_hover_text(format!(
                     "Add the missing project assets before exporting: {details}."
                 ));
             } else {
-                export_button = export_button
+                export_response
                     .on_hover_text("Export the contents of the current PSU archive to a folder.");
-            }
-            if export_button.clicked() {
-                app.handle_save_as_folder_with_contents();
             }
         });
 
@@ -364,9 +306,19 @@ impl ListKind {
     }
 }
 
+impl From<FileListKind> for ListKind {
+    fn from(kind: FileListKind) -> Self {
+        match kind {
+            FileListKind::Include => ListKind::Include,
+            FileListKind::Exclude => ListKind::Exclude,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TimestampStrategy;
     use chrono::NaiveDate;
     use ps2_filetypes::sjis;
     use std::path::PathBuf;
@@ -481,144 +433,96 @@ mod tests {
     }
 }
 
-struct FileListActions {
-    browse_add: bool,
-    remove: bool,
-    manual_add: Option<String>,
-}
+fn file_list_ui(app: &mut PackerApp, ui: &mut egui::Ui, kind: ListKind) {
+    let file_list_kind = kind.as_file_list_kind();
+    let label = kind.label();
 
-fn file_list_ui(
-    ui: &mut egui::Ui,
-    label: &str,
-    files: &mut Vec<String>,
-    selected: &mut Option<usize>,
-    manual_entry: &mut String,
-    allow_browse: bool,
-) -> FileListActions {
-    let mut browse_clicked = false;
-    let mut remove_clicked = false;
-    let mut manual_added: Option<String> = None;
-    let has_selection = selected.is_some();
+    let browse_descriptor = ActionDescriptor::new(
+        Action::FileList(FileListAction::Browse(file_list_kind)),
+        "📁",
+    );
+    let manual_add_descriptor = ActionDescriptor::new(
+        Action::FileList(FileListAction::ManualAdd(file_list_kind)),
+        "Add",
+    );
+    let remove_descriptor = ActionDescriptor::new(
+        Action::FileList(FileListAction::RemoveSelected(file_list_kind)),
+        "➖",
+    );
+
+    let shortcut_descriptors = [
+        browse_descriptor.clone(),
+        manual_add_descriptor.clone(),
+        remove_descriptor.clone(),
+    ];
+    actions::handle_shortcuts(ui.ctx(), app, &shortcut_descriptors);
 
     ui.horizontal(|ui| {
         ui.label(label);
         ui.add_space(ui.spacing().item_spacing.x);
 
-        let browse_button = egui::Button::new("📁").small();
-        let browse_response = ui
-            .add_enabled(allow_browse, browse_button)
+        actions::action_button(ui, app, &browse_descriptor)
             .on_hover_text("Browse for files in the selected folder.");
-        if browse_response.clicked() {
-            browse_clicked = true;
-        }
 
-        if ui
-            .add_enabled(has_selection, egui::Button::new("➖").small())
-            .on_hover_text("Remove the selected file from this list.")
-            .clicked()
-        {
-            remove_clicked = true;
-        }
+        actions::action_button(ui, app, &remove_descriptor)
+            .on_hover_text("Remove the selected file from this list.");
     });
 
     ui.horizontal(|ui| {
-        let response =
-            ui.add(egui::TextEdit::singleline(manual_entry).hint_text("Add file by name"));
-        let add_manual = ui
-            .add(egui::Button::new("Add").small())
-            .on_hover_text("Add the typed entry to this list.")
-            .clicked();
-        let enter_pressed = ui.input(|input| input.key_pressed(egui::Key::Enter));
+        let response = {
+            let manual_entry = app.packer_state_mut().manual_entry_mut(file_list_kind);
+            ui.add(egui::TextEdit::singleline(manual_entry).hint_text("Add file by name"))
+        };
 
-        if add_manual || (response.lost_focus() && enter_pressed) {
-            let value = manual_entry.trim();
-            if !value.is_empty() {
-                manual_added = Some(value.to_string());
-                manual_entry.clear();
+        actions::action_button(ui, app, &manual_add_descriptor)
+            .on_hover_text("Add the typed entry to this list.");
+
+        let enter_pressed =
+            response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+        if enter_pressed {
+            let action = manual_add_descriptor.action.clone();
+            if app.is_action_enabled(action.clone()) {
+                app.trigger_action(action);
             }
         }
     });
+
+    let files = app
+        .packer_state()
+        .file_list_entries(file_list_kind)
+        .to_vec();
+    let selected_index = app.packer_state().file_list_selection(file_list_kind);
 
     egui::ScrollArea::vertical()
         .max_height(150.0)
         .show(ui, |ui| {
             for (idx, file) in files.iter().enumerate() {
                 ui.horizontal(|ui| {
-                    let is_selected = Some(idx) == *selected;
+                    let is_selected = Some(idx) == selected_index;
                     if ui.selectable_label(is_selected, file).clicked() {
-                        *selected = Some(idx);
+                        app.packer_state_mut()
+                            .select_file_list_entry(file_list_kind, Some(idx));
                     }
 
                     ui.add_space(ui.spacing().item_spacing.x);
 
-                    if ui
+                    let response = ui
                         .small_button("✖")
-                        .on_hover_text("Remove this file from the list.")
-                        .clicked()
-                    {
-                        *selected = Some(idx);
-                        remove_clicked = true;
+                        .on_hover_text("Remove this file from the list.");
+                    if response.clicked() {
+                        app.packer_state_mut()
+                            .select_file_list_entry(file_list_kind, Some(idx));
+                        let action = remove_descriptor.action.clone();
+                        if app.is_action_enabled(action.clone()) {
+                            app.trigger_action(action);
+                        }
                     }
                 });
             }
         });
-
-    FileListActions {
-        browse_add: browse_clicked,
-        remove: remove_clicked,
-        manual_add: manual_added,
-    }
 }
 
 impl PackerApp {
-    pub(crate) fn browse_output_destination(&mut self) -> bool {
-        let mut dialog = rfd::FileDialog::new().add_filter("PSU", &["psu"]);
-
-        let trimmed_output = self.packer_state.output.trim();
-        if trimmed_output.is_empty() {
-            if let Some(default_dir) = self.packer_state.default_output_directory(None) {
-                dialog = dialog.set_directory(default_dir);
-            }
-            if let Some(default_name) = self.packer_state.default_output_file_name() {
-                dialog = dialog.set_file_name(&default_name);
-            }
-        } else {
-            let current_path = Path::new(trimmed_output);
-            if let Some(parent) = current_path.parent() {
-                if !parent.as_os_str().is_empty() {
-                    dialog = dialog.set_directory(parent);
-                } else if let Some(default_dir) = self.packer_state.default_output_directory(None) {
-                    dialog = dialog.set_directory(default_dir);
-                }
-            } else if let Some(default_dir) = self.packer_state.default_output_directory(None) {
-                dialog = dialog.set_directory(default_dir);
-            }
-
-            if let Some(existing_name) = current_path.file_name().and_then(|name| name.to_str()) {
-                dialog = dialog.set_file_name(existing_name);
-            } else if let Some(default_name) = self.packer_state.default_output_file_name() {
-                dialog = dialog.set_file_name(&default_name);
-            }
-        }
-
-        if let Some(mut file) = dialog.save_file() {
-            let has_psu_extension = file
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext.eq_ignore_ascii_case("psu"))
-                .unwrap_or(false);
-
-            if !has_psu_extension {
-                file.set_extension("psu");
-            }
-
-            self.packer_state.output = file.display().to_string();
-            true
-        } else {
-            false
-        }
-    }
-
     pub(crate) fn ensure_output_destination_selected(&mut self) -> bool {
         if self.packer_state.output.trim().is_empty() {
             if let Some(path) = self.packer_state.default_output_path() {
@@ -627,7 +531,7 @@ impl PackerApp {
         }
 
         if self.packer_state.output.trim().is_empty() {
-            return self.browse_output_destination();
+            return self.choose_output_destination_dialog();
         }
 
         true
@@ -689,12 +593,107 @@ impl PackerApp {
     }
 
     pub(crate) fn handle_add_file(&mut self, kind: ListKind) -> bool {
+        let file_list_kind = kind.as_file_list_kind();
+        let before = self.packer_state.file_list_entries(file_list_kind).len();
+        self.trigger_action(Action::FileList(FileListAction::Browse(file_list_kind)));
+        self.packer_state.file_list_entries(file_list_kind).len() > before
+    }
+
+    pub(crate) fn handle_add_file_from_entry(&mut self, kind: ListKind, entry: &str) -> bool {
+        let file_list_kind = kind.as_file_list_kind();
+        {
+            let manual = self.packer_state.manual_entry_mut(file_list_kind);
+            manual.clear();
+            manual.push_str(entry);
+        }
+        let before = self.packer_state.file_list_entries(file_list_kind).len();
+        self.trigger_action(Action::FileList(FileListAction::ManualAdd(file_list_kind)));
+        self.packer_state.file_list_entries(file_list_kind).len() > before
+    }
+
+    pub(crate) fn handle_remove_file(&mut self, kind: ListKind) -> bool {
+        let file_list_kind = kind.as_file_list_kind();
+        let before = self.packer_state.file_list_entries(file_list_kind).len();
+        self.trigger_action(Action::FileList(FileListAction::RemoveSelected(
+            file_list_kind,
+        )));
+        self.packer_state.file_list_entries(file_list_kind).len() < before
+    }
+
+    fn add_file_entry(&mut self, kind: FileListKind, entry: &str) -> Result<usize, String> {
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            return Err("File name cannot be empty".to_string());
+        }
+
+        if self
+            .packer_state
+            .file_list_entries(kind)
+            .iter()
+            .any(|existing| existing == trimmed)
+        {
+            return Err(format!("{trimmed} (already listed)"));
+        }
+
+        Ok(self
+            .packer_state
+            .add_file_list_entry(kind, trimmed.to_string()))
+    }
+
+    pub(crate) fn choose_output_destination_dialog(&mut self) -> bool {
+        let mut dialog = rfd::FileDialog::new().add_filter("PSU", &["psu"]);
+
+        let trimmed_output = self.packer_state.output.trim();
+        if trimmed_output.is_empty() {
+            if let Some(default_dir) = self.packer_state.default_output_directory(None) {
+                dialog = dialog.set_directory(default_dir);
+            }
+            if let Some(default_name) = self.packer_state.default_output_file_name() {
+                dialog = dialog.set_file_name(&default_name);
+            }
+        } else {
+            let current_path = Path::new(trimmed_output);
+            if let Some(parent) = current_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    dialog = dialog.set_directory(parent);
+                } else if let Some(default_dir) = self.packer_state.default_output_directory(None) {
+                    dialog = dialog.set_directory(default_dir);
+                }
+            } else if let Some(default_dir) = self.packer_state.default_output_directory(None) {
+                dialog = dialog.set_directory(default_dir);
+            }
+
+            if let Some(existing_name) = current_path.file_name().and_then(|name| name.to_str()) {
+                dialog = dialog.set_file_name(existing_name);
+            } else if let Some(default_name) = self.packer_state.default_output_file_name() {
+                dialog = dialog.set_file_name(&default_name);
+            }
+        }
+
+        if let Some(mut file) = dialog.save_file() {
+            let has_psu_extension = file
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("psu"))
+                .unwrap_or(false);
+
+            if !has_psu_extension {
+                file.set_extension("psu");
+            }
+
+            self.packer_state.output = file.display().to_string();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn add_files_via_dialog(&mut self, kind: FileListKind) -> bool {
         let Some(folder) = self.packer_state.folder.clone() else {
             return false;
         };
 
-        let list_label = kind.label();
-        let file_list_kind = kind.as_file_list_kind();
+        let list_label: ListKind = kind.into();
 
         let Some(paths) = rfd::FileDialog::new().set_directory(&folder).pick_files() else {
             return false;
@@ -729,7 +728,7 @@ impl PackerApp {
                 continue;
             };
 
-            match self.add_file_entry(file_list_kind, name) {
+            match self.add_file_entry(kind, name) {
                 Ok(_) => {
                     added_any = true;
                 }
@@ -745,38 +744,39 @@ impl PackerApp {
                 self.packer_state.status.clear();
             }
         } else {
-            let message = format!("Some files could not be added to the {list_label} list");
+            let message = format!(
+                "Some files could not be added to the {} list",
+                list_label.label()
+            );
             self.set_error_message((message, invalid_entries));
         }
 
         added_any
     }
 
-    pub(crate) fn handle_add_file_from_entry(&mut self, kind: ListKind, entry: &str) -> bool {
-        let list_label = kind.label();
-        let file_list_kind = kind.as_file_list_kind();
-        match self.add_file_entry(file_list_kind, entry) {
+    pub(crate) fn add_file_from_manual_entry(&mut self, kind: FileListKind, entry: &str) -> bool {
+        let list_kind: ListKind = kind.into();
+        match self.add_file_entry(kind, entry) {
             Ok(_) => {
                 self.clear_error_message();
                 self.packer_state.status.clear();
-                self.packer_state.clear_manual_entry(file_list_kind);
+                self.packer_state.clear_manual_entry(kind);
                 true
             }
             Err(err) => {
-                let message = format!("Could not add the entry to the {list_label} list");
+                let message = format!("Could not add the entry to the {} list", list_kind.label());
                 self.set_error_message((message, vec![err]));
                 false
             }
         }
     }
 
-    pub(crate) fn handle_remove_file(&mut self, kind: ListKind) -> bool {
-        let file_list_kind = kind.as_file_list_kind();
-        let selection = self.packer_state.file_list_selection(file_list_kind);
+    pub(crate) fn remove_selected_file_from_list(&mut self, kind: FileListKind) -> bool {
+        let selection = self.packer_state.file_list_selection(kind);
         if let Some(index) = selection {
             let removed = self
                 .packer_state
-                .remove_file_list_entry(file_list_kind, index)
+                .remove_file_list_entry(kind, index)
                 .is_some();
             if removed {
                 self.clear_error_message();
@@ -786,26 +786,6 @@ impl PackerApp {
         } else {
             false
         }
-    }
-
-    fn add_file_entry(&mut self, kind: FileListKind, entry: &str) -> Result<usize, String> {
-        let trimmed = entry.trim();
-        if trimmed.is_empty() {
-            return Err("File name cannot be empty".to_string());
-        }
-
-        if self
-            .packer_state
-            .file_list_entries(kind)
-            .iter()
-            .any(|existing| existing == trimmed)
-        {
-            return Err(format!("{trimmed} (already listed)"));
-        }
-
-        Ok(self
-            .packer_state
-            .add_file_list_entry(kind, trimmed.to_string()))
     }
 
     fn validate_icon_sys_settings(&self) -> Result<(), String> {

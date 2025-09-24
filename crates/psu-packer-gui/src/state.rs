@@ -5,7 +5,6 @@ use std::{
 };
 
 use crate::ui;
-use crate::ui::pack_controls::ListKind;
 use crate::ui::theme;
 use eframe::egui::{self, Widget};
 #[cfg(test)]
@@ -25,6 +24,7 @@ use indexmap::IndexMap;
 use ps2_filetypes::{templates, IconSys, TitleCfg};
 use psu_packer::split_icon_sys_title;
 #[cfg(any(test, feature = "psu-toml-editor"))]
+#[cfg(feature = "psu-toml-editor")]
 use tempfile::tempdir;
 use tempfile::TempDir;
 use toml::Table;
@@ -422,7 +422,7 @@ impl PackerApp {
         )
     }
 
-    pub(crate) fn handle_pack_request(&mut self) {
+    fn process_pack_request(&mut self) {
         if self.is_pack_running() {
             return;
         }
@@ -451,7 +451,11 @@ impl PackerApp {
         }
     }
 
-    pub(crate) fn handle_update_psu_request(&mut self) {
+    pub(crate) fn handle_pack_request(&mut self) {
+        self.trigger_action(Action::PackPsu);
+    }
+
+    fn process_update_psu_request(&mut self) {
         if self.is_pack_running() {
             return;
         }
@@ -515,7 +519,11 @@ impl PackerApp {
         self.begin_pack_job(folder, destination, config);
     }
 
-    pub(crate) fn handle_save_as_folder_with_contents(&mut self) {
+    pub(crate) fn handle_update_psu_request(&mut self) {
+        self.trigger_action(Action::UpdatePsu);
+    }
+
+    fn process_save_as_folder_with_contents(&mut self) {
         if self.is_pack_running() {
             return;
         }
@@ -553,6 +561,10 @@ impl PackerApp {
                 self.set_error_message(message);
             }
         }
+    }
+
+    pub(crate) fn handle_save_as_folder_with_contents(&mut self) {
+        self.trigger_action(Action::ExportPsuToFolder);
     }
 
     fn prepare_pack_inputs(&mut self) -> Option<PackPreparation> {
@@ -939,7 +951,10 @@ impl PackerApp {
 impl ActionDispatcher for PackerApp {
     fn is_action_enabled(&self, action: Action) -> bool {
         match action {
-            Action::PackPsu => !self.is_pack_running(),
+            Action::PackPsu | Action::UpdatePsu | Action::ExportPsuToFolder => {
+                !self.is_pack_running()
+                    && self.packer_state.missing_required_project_files.is_empty()
+            }
             Action::ChooseOutputDestination => !self.is_pack_running(),
             #[cfg(feature = "psu-toml-editor")]
             Action::EditMetadata(MetadataTarget::PsuToml)
@@ -971,14 +986,12 @@ impl ActionDispatcher for PackerApp {
     fn trigger_action(&mut self, action: Action) {
         match action {
             Action::OpenProject => self.handle_open_psu(),
-            Action::PackPsu => {
-                if !self.is_pack_running() {
-                    self.handle_pack_request();
-                }
-            }
+            Action::PackPsu => self.process_pack_request(),
+            Action::UpdatePsu => self.process_update_psu_request(),
+            Action::ExportPsuToFolder => self.process_save_as_folder_with_contents(),
             Action::ChooseOutputDestination => {
                 self.packer_state.request_output_destination_dialog();
-                self.browse_output_destination();
+                self.choose_output_destination_dialog();
             }
             Action::EditMetadata(MetadataTarget::TitleCfg) => {
                 self.open_title_cfg_tab();
@@ -1013,10 +1026,27 @@ impl ActionDispatcher for PackerApp {
                 EditorAction::IconSys => self.open_icon_sys_tab(),
                 EditorAction::TimestampAutomation => self.open_timestamp_auto_tab(),
             },
-            Action::Metadata(MetadataAction::ResetFields) => {
-                self.reset_metadata_fields();
-                self.refresh_psu_toml_editor();
-            }
+            Action::Metadata(metadata_action) => match metadata_action {
+                MetadataAction::ResetFields => {
+                    self.reset_metadata_fields();
+                    self.refresh_psu_toml_editor();
+                }
+                MetadataAction::SelectPrefix(prefix) => {
+                    if self.packer_state.set_selected_prefix(prefix) {
+                        self.refresh_psu_toml_editor();
+                    }
+                }
+                MetadataAction::SetFolderBaseName(base_name) => {
+                    if self.packer_state.set_folder_base_name(base_name) {
+                        self.refresh_psu_toml_editor();
+                    }
+                }
+                MetadataAction::SetPsuFileBaseName(base_name) => {
+                    if self.packer_state.set_psu_file_base_name(base_name) {
+                        self.refresh_psu_toml_editor();
+                    }
+                }
+            },
             Action::Timestamp(timestamp_action) => match timestamp_action {
                 TimestampAction::SelectStrategy(strategy_action) => {
                     let strategy = match strategy_action {
@@ -1040,50 +1070,41 @@ impl ActionDispatcher for PackerApp {
                     self.reset_timestamp_rules_to_default();
                 }
             },
-            Action::FileList(file_action) => {
-                let list_kind = |kind: FileListKind| match kind {
-                    FileListKind::Include => ListKind::Include,
-                    FileListKind::Exclude => ListKind::Exclude,
-                };
-
-                match file_action {
-                    FileListAction::Browse(kind) => {
-                        self.packer_state.request_file_list_entries(kind);
-                        if self.handle_add_file(list_kind(kind)) {
-                            self.refresh_psu_toml_editor();
-                        }
-                    }
-                    FileListAction::ManualAdd(kind) => {
-                        let value = match kind {
-                            FileListKind::Include => {
-                                self.packer_state.include_manual_entry.trim().to_string()
-                            }
-                            FileListKind::Exclude => {
-                                self.packer_state.exclude_manual_entry.trim().to_string()
-                            }
-                        };
-
-                        if !value.is_empty()
-                            && self.handle_add_file_from_entry(list_kind(kind), &value)
-                        {
-                            match kind {
-                                FileListKind::Include => {
-                                    self.packer_state.include_manual_entry.clear();
-                                }
-                                FileListKind::Exclude => {
-                                    self.packer_state.exclude_manual_entry.clear();
-                                }
-                            }
-                            self.refresh_psu_toml_editor();
-                        }
-                    }
-                    FileListAction::RemoveSelected(kind) => {
-                        if self.handle_remove_file(list_kind(kind)) {
-                            self.refresh_psu_toml_editor();
-                        }
+            Action::FileList(file_action) => match file_action {
+                FileListAction::Browse(kind) => {
+                    self.packer_state.request_file_list_entries(kind);
+                    if self.add_files_via_dialog(kind) {
+                        self.refresh_psu_toml_editor();
                     }
                 }
-            }
+                FileListAction::ManualAdd(kind) => {
+                    let value = match kind {
+                        FileListKind::Include => {
+                            self.packer_state.include_manual_entry.trim().to_string()
+                        }
+                        FileListKind::Exclude => {
+                            self.packer_state.exclude_manual_entry.trim().to_string()
+                        }
+                    };
+
+                    if !value.is_empty() && self.add_file_from_manual_entry(kind, &value) {
+                        match kind {
+                            FileListKind::Include => {
+                                self.packer_state.include_manual_entry.clear();
+                            }
+                            FileListKind::Exclude => {
+                                self.packer_state.exclude_manual_entry.clear();
+                            }
+                        }
+                        self.refresh_psu_toml_editor();
+                    }
+                }
+                FileListAction::RemoveSelected(kind) => {
+                    if self.remove_selected_file_from_list(kind) {
+                        self.refresh_psu_toml_editor();
+                    }
+                }
+            },
             Action::IconSys(icon_action) => match icon_action {
                 IconSysAction::Enable => {
                     if !self.icon_sys_enabled {

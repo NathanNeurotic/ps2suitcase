@@ -80,7 +80,7 @@ pub struct ProjectRequirementStatus {
     pub satisfied: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SasPrefix {
     None,
     App,
@@ -1733,6 +1733,8 @@ impl ActionDispatcher for AppState {
                 self.icon_sys_enabled && !self.icon_sys_use_existing && self.opened_folder.is_some()
             }
             Action::PackPsu
+            | Action::UpdatePsu
+            | Action::ExportPsuToFolder
             | Action::ChooseOutputDestination
             | Action::AddFiles
             | Action::SaveFile
@@ -1750,16 +1752,29 @@ impl ActionDispatcher for AppState {
         match action {
             Action::OpenProject => self.open_folder(),
             Action::PackPsu => self.export_psu(),
+            Action::UpdatePsu => {}
+            Action::ExportPsuToFolder => {}
             Action::AddFiles => self.add_files(),
             Action::SaveFile => self.save_file(),
             Action::ChooseOutputDestination => self.choose_output_destination(),
             Action::CreateMetadataTemplate(MetadataTarget::PsuToml) => self.create_psu_toml(),
             Action::CreateMetadataTemplate(MetadataTarget::TitleCfg) => self.create_title_cfg(),
             Action::OpenSettings => self.open_settings(),
-            Action::Metadata(MetadataAction::ResetFields) => {
-                self.packer.reset_metadata_fields();
-                self.reset_icon_sys_fields();
-            }
+            Action::Metadata(metadata_action) => match metadata_action {
+                MetadataAction::ResetFields => {
+                    self.packer.reset_metadata_fields();
+                    self.reset_icon_sys_fields();
+                }
+                MetadataAction::SelectPrefix(prefix) => {
+                    self.packer.set_selected_prefix(prefix);
+                }
+                MetadataAction::SetFolderBaseName(base_name) => {
+                    self.packer.set_folder_base_name(base_name);
+                }
+                MetadataAction::SetPsuFileBaseName(base_name) => {
+                    self.packer.set_psu_file_base_name(base_name);
+                }
+            },
             Action::Timestamp(timestamp_action) => match timestamp_action {
                 TimestampAction::SelectStrategy(strategy_action) => {
                     let strategy = match strategy_action {
@@ -1845,6 +1860,8 @@ impl ActionDispatcher for AppState {
             action,
             Action::OpenProject
                 | Action::PackPsu
+                | Action::UpdatePsu
+                | Action::ExportPsuToFolder
                 | Action::ChooseOutputDestination
                 | Action::AddFiles
                 | Action::SaveFile
