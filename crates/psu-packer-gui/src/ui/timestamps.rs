@@ -3,6 +3,8 @@ use eframe::egui;
 use egui_extras::DatePickerButton;
 
 use crate::{ui::theme, PackerApp, TimestampStrategy, TIMESTAMP_FORMAT};
+use gui_core::actions::{Action, TimestampAction, TimestampStrategyAction};
+use gui_core::ActionDispatcher;
 
 pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui) {
     ui.vertical(|ui| {
@@ -38,7 +40,11 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
                         && app.packer_state.timestamp_strategy != TimestampStrategy::None
                         && strategy == TimestampStrategy::None
                     {
-                        app.set_timestamp_strategy(strategy);
+                        app.trigger_action(Action::Timestamp(
+                            TimestampAction::SelectStrategy(
+                                TimestampStrategyAction::None,
+                            ),
+                        ));
                     }
                 });
                 ui.label("• Use when verifying contents does not require metadata timestamps.");
@@ -63,7 +69,11 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
                         && app.packer_state.timestamp_strategy != TimestampStrategy::InheritSource
                         && strategy == TimestampStrategy::InheritSource
                     {
-                        app.set_timestamp_strategy(strategy);
+                        app.trigger_action(Action::Timestamp(
+                            TimestampAction::SelectStrategy(
+                                TimestampStrategyAction::InheritSource,
+                            ),
+                        ));
                     }
                 });
                 ui.label("• Use when the loaded source already contains a trusted timestamp.");
@@ -94,7 +104,11 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
                         && app.packer_state.timestamp_strategy != TimestampStrategy::SasRules
                         && strategy == TimestampStrategy::SasRules
                     {
-                        app.set_timestamp_strategy(strategy);
+                        app.trigger_action(Action::Timestamp(
+                            TimestampAction::SelectStrategy(
+                                TimestampStrategyAction::SasRules,
+                            ),
+                        ));
                     }
                 });
                 ui.label("• Use when project names follow SAS conventions for deterministic scheduling.");
@@ -111,8 +125,6 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
 
         ui.add_space(6.0);
 
-        let mut manual_timestamp_changed = false;
-
         ui.group(|ui| {
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
@@ -128,18 +140,21 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
                         && app.packer_state.timestamp_strategy != TimestampStrategy::Manual
                         && strategy == TimestampStrategy::Manual
                     {
-                        app.set_timestamp_strategy(strategy);
+                        app.trigger_action(Action::Timestamp(
+                            TimestampAction::SelectStrategy(
+                                TimestampStrategyAction::Manual,
+                            ),
+                        ));
                     }
                 });
                 ui.label("• Use when you must pin the archive to an explicit, reviewer-approved timestamp.");
                 ui.label("• Relies on: Manual date and time you enter here.");
 
                 if strategy == TimestampStrategy::Manual {
-                    if app
-                        .packer_state
-                        .ensure_manual_timestamp(default_timestamp)
-                    {
-                        manual_timestamp_changed = true;
+                    if app.packer_state.manual_timestamp.is_none() {
+                        app.trigger_action(Action::Timestamp(
+                            TimestampAction::SetManualTimestamp(Some(default_timestamp)),
+                        ));
                     }
                 }
 
@@ -187,20 +202,16 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
                     if changed {
                         if let Some(new_time) = NaiveTime::from_hms_opt(hour, minute, second) {
                             timestamp = NaiveDateTime::new(date, new_time);
-                            if app
-                                .packer_state
-                                .set_manual_timestamp(Some(timestamp))
-                            {
-                                manual_timestamp_changed = true;
+                            if app.packer_state.manual_timestamp != Some(timestamp) {
+                                app.trigger_action(Action::Timestamp(
+                                    TimestampAction::SetManualTimestamp(Some(timestamp)),
+                                ));
                             }
                         }
                     } else if app.packer_state.manual_timestamp != Some(timestamp) {
-                        if app
-                            .packer_state
-                            .set_manual_timestamp(Some(timestamp))
-                        {
-                            manual_timestamp_changed = true;
-                        }
+                        app.trigger_action(Action::Timestamp(
+                            TimestampAction::SetManualTimestamp(Some(timestamp)),
+                        ));
                     }
 
                     if let Some(ts) = app.packer_state.manual_timestamp {
@@ -209,11 +220,10 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
 
                     if let Some(planned) = planned_timestamp {
                         if ui.button("Copy planned timestamp").clicked() {
-                            if app
-                                .packer_state
-                                .set_manual_timestamp(Some(planned))
-                            {
-                                manual_timestamp_changed = true;
+                            if app.packer_state.manual_timestamp != Some(planned) {
+                                app.trigger_action(Action::Timestamp(
+                                    TimestampAction::SetManualTimestamp(Some(planned)),
+                                ));
                             }
                         }
                     }
@@ -222,11 +232,15 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
         });
 
         if strategy != app.packer_state.timestamp_strategy {
-            app.set_timestamp_strategy(strategy);
-        }
-
-        if manual_timestamp_changed {
-            app.refresh_psu_toml_editor();
+            let strategy_action = match strategy {
+                TimestampStrategy::None => TimestampStrategyAction::None,
+                TimestampStrategy::InheritSource => TimestampStrategyAction::InheritSource,
+                TimestampStrategy::SasRules => TimestampStrategyAction::SasRules,
+                TimestampStrategy::Manual => TimestampStrategyAction::Manual,
+            };
+            app.trigger_action(Action::Timestamp(TimestampAction::SelectStrategy(
+                strategy_action,
+            )));
         }
 
         ui.add_space(8.0);

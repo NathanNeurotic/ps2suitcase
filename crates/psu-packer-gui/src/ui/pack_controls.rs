@@ -1,16 +1,13 @@
-use std::path::Path;
-
 use eframe::egui;
 
 use crate::{
     ui::{project_requirements_checklist, theme},
-    PackerApp, SasPrefix, ICON_SYS_TITLE_CHAR_LIMIT, REQUIRED_PROJECT_FILES,
+    PackerApp, SasPrefix, REQUIRED_PROJECT_FILES,
 };
 use gui_core::{
     actions::{self, Action, ActionDescriptor, FileListAction, FileListKind, MetadataAction},
     ActionDispatcher,
 };
-use ps2_filetypes::sjis;
 
 pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
     ui.set_width(ui.available_width());
@@ -350,9 +347,7 @@ mod tests {
     #[test]
     fn config_from_state_appends_psu_toml_once() {
         let base_app = app_with_prefix(SasPrefix::App);
-        let config = base_app
-            .config_from_state()
-            .expect("configuration should build");
+        let config = base_app.build_config().expect("configuration should build");
         assert_eq!(config.exclude, Some(vec!["psu.toml".to_string()]));
         assert!(
             base_app.packer_state.exclude_files.is_empty(),
@@ -368,7 +363,7 @@ mod tests {
         set_manual_entry(&mut manual_entry_app, FileListKind::Exclude, "DATA.BIN");
         dispatch_action(&mut manual_entry_app, &manual_add_exclude);
         let config_with_manual_entry = manual_entry_app
-            .config_from_state()
+            .build_config()
             .expect("configuration should include manual exclude");
         assert_eq!(
             config_with_manual_entry.exclude,
@@ -379,7 +374,7 @@ mod tests {
         set_manual_entry(&mut duplicate_app, FileListKind::Exclude, "psu.toml");
         dispatch_action(&mut duplicate_app, &manual_add_exclude);
         let config_with_duplicate = duplicate_app
-            .config_from_state()
+            .build_config()
             .expect("configuration should handle duplicate entries");
         assert_eq!(
             config_with_duplicate.exclude,
@@ -483,7 +478,7 @@ mod tests {
         app.icon_sys_title_line1 = "メモ".to_string();
         app.icon_sys_title_line2 = "リーカード".to_string();
 
-        let config = app.config_from_state().expect("configuration should build");
+        let config = app.build_config().expect("configuration should build");
         let icon_sys = config.icon_sys.expect("icon_sys configuration present");
         let expected_break = sjis::encode_sjis(&app.icon_sys_title_line1).unwrap().len() as u16;
 
@@ -558,8 +553,10 @@ fn file_list_ui(app: &mut PackerApp, ui: &mut egui::Ui, kind: ListKind) {
                 ui.horizontal(|ui| {
                     let is_selected = Some(idx) == selected_index;
                     if ui.selectable_label(is_selected, file).clicked() {
-                        app.packer_state_mut()
-                            .select_file_list_entry(file_list_kind, Some(idx));
+                        app.trigger_action(Action::FileList(FileListAction::SelectEntry(
+                            file_list_kind,
+                            Some(idx),
+                        )));
                     }
 
                     ui.add_space(ui.spacing().item_spacing.x);
@@ -568,408 +565,13 @@ fn file_list_ui(app: &mut PackerApp, ui: &mut egui::Ui, kind: ListKind) {
                         .small_button("✖")
                         .on_hover_text("Remove this file from the list.");
                     if response.clicked() {
-                        app.packer_state_mut()
-                            .select_file_list_entry(file_list_kind, Some(idx));
-                        let action = remove_descriptor.action.clone();
-                        if app.is_action_enabled(action.clone()) {
-                            app.trigger_action(action);
-                        }
+                        app.trigger_action(Action::FileList(FileListAction::SelectEntry(
+                            file_list_kind,
+                            Some(idx),
+                        )));
+                        app.trigger_action(remove_descriptor.action.clone());
                     }
                 });
             }
         });
-}
-
-impl PackerApp {
-    pub(crate) fn ensure_output_destination_selected(&mut self) -> bool {
-        if self.packer_state.output.trim().is_empty() {
-            if let Some(path) = self.packer_state.default_output_path() {
-                self.packer_state.output = path.display().to_string();
-            }
-        }
-
-        if self.packer_state.output.trim().is_empty() {
-            return self.choose_output_destination_dialog();
-        }
-
-        true
-    }
-
-    pub(crate) fn build_config(&self) -> Result<psu_packer::Config, String> {
-        self.validate_icon_sys_settings()?;
-        self.config_from_state()
-    }
-
-    pub(crate) fn format_pack_error(
-        &self,
-        folder: &Path,
-        output_path: &Path,
-        err: psu_packer::Error,
-    ) -> String {
-        match err {
-            psu_packer::Error::NameError => {
-                "PSU name can only contain letters, numbers, spaces, underscores, and hyphens."
-                    .to_string()
-            }
-            psu_packer::Error::ConfigError(message) => {
-                format!("Configuration error: {message}")
-            }
-            psu_packer::Error::IOError(io_err) => {
-                let missing_files = self.packer_state.missing_include_files(folder);
-                if !missing_files.is_empty() {
-                    let formatted = missing_files
-                        .into_iter()
-                        .map(|name| format!("• {name}"))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    return format!(
-                        "The following files referenced in the configuration are missing from {}:\n{}",
-                        folder.display(),
-                        formatted
-                    );
-                }
-
-                match io_err.kind() {
-                    std::io::ErrorKind::NotFound => {
-                        if let Some(parent) = output_path.parent() {
-                            if !parent.exists() {
-                                return format!(
-                                    "Cannot write the PSU file because the destination folder {} does not exist.",
-                                    parent.display()
-                                );
-                            }
-                        }
-                        format!("A required file or folder could not be found: {io_err}")
-                    }
-                    std::io::ErrorKind::PermissionDenied => {
-                        format!("Permission denied while accessing the file system: {io_err}")
-                    }
-                    _ => format!("File system error: {io_err}"),
-                }
-            }
-        }
-    }
-
-    pub(crate) fn handle_add_file(&mut self, kind: ListKind) -> bool {
-        let file_list_kind = kind.as_file_list_kind();
-        let before = self.packer_state.file_list_entries(file_list_kind).len();
-        self.trigger_action(Action::FileList(FileListAction::Browse(file_list_kind)));
-        self.packer_state.file_list_entries(file_list_kind).len() > before
-    }
-
-    pub(crate) fn handle_add_file_from_entry(&mut self, kind: ListKind, entry: &str) -> bool {
-        let file_list_kind = kind.as_file_list_kind();
-        {
-            let manual = self.packer_state.manual_entry_mut(file_list_kind);
-            manual.clear();
-            manual.push_str(entry);
-        }
-        let before = self.packer_state.file_list_entries(file_list_kind).len();
-        self.trigger_action(Action::FileList(FileListAction::ManualAdd(file_list_kind)));
-        self.packer_state.file_list_entries(file_list_kind).len() > before
-    }
-
-    pub(crate) fn handle_remove_file(&mut self, kind: ListKind) -> bool {
-        let file_list_kind = kind.as_file_list_kind();
-        let before = self.packer_state.file_list_entries(file_list_kind).len();
-        self.trigger_action(Action::FileList(FileListAction::RemoveSelected(
-            file_list_kind,
-        )));
-        self.packer_state.file_list_entries(file_list_kind).len() < before
-    }
-
-    fn add_file_entry(&mut self, kind: FileListKind, entry: &str) -> Result<usize, String> {
-        let trimmed = entry.trim();
-        if trimmed.is_empty() {
-            return Err("File name cannot be empty".to_string());
-        }
-
-        if self
-            .packer_state
-            .file_list_entries(kind)
-            .iter()
-            .any(|existing| existing == trimmed)
-        {
-            return Err(format!("{trimmed} (already listed)"));
-        }
-
-        Ok(self
-            .packer_state
-            .add_file_list_entry(kind, trimmed.to_string()))
-    }
-
-    pub(crate) fn choose_output_destination_dialog(&mut self) -> bool {
-        let mut dialog = rfd::FileDialog::new().add_filter("PSU", &["psu"]);
-
-        let trimmed_output = self.packer_state.output.trim();
-        if trimmed_output.is_empty() {
-            if let Some(default_dir) = self.packer_state.default_output_directory(None) {
-                dialog = dialog.set_directory(default_dir);
-            }
-            if let Some(default_name) = self.packer_state.default_output_file_name() {
-                dialog = dialog.set_file_name(&default_name);
-            }
-        } else {
-            let current_path = Path::new(trimmed_output);
-            if let Some(parent) = current_path.parent() {
-                if !parent.as_os_str().is_empty() {
-                    dialog = dialog.set_directory(parent);
-                } else if let Some(default_dir) = self.packer_state.default_output_directory(None) {
-                    dialog = dialog.set_directory(default_dir);
-                }
-            } else if let Some(default_dir) = self.packer_state.default_output_directory(None) {
-                dialog = dialog.set_directory(default_dir);
-            }
-
-            if let Some(existing_name) = current_path.file_name().and_then(|name| name.to_str()) {
-                dialog = dialog.set_file_name(existing_name);
-            } else if let Some(default_name) = self.packer_state.default_output_file_name() {
-                dialog = dialog.set_file_name(&default_name);
-            }
-        }
-
-        if let Some(mut file) = dialog.save_file() {
-            let has_psu_extension = file
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext.eq_ignore_ascii_case("psu"))
-                .unwrap_or(false);
-
-            if !has_psu_extension {
-                file.set_extension("psu");
-            }
-
-            self.packer_state.output = file.display().to_string();
-            true
-        } else {
-            false
-        }
-    }
-
-    pub(crate) fn add_files_via_dialog(&mut self, kind: FileListKind) -> bool {
-        let Some(folder) = self.packer_state.folder.clone() else {
-            return false;
-        };
-
-        let list_label: ListKind = kind.into();
-
-        let Some(paths) = rfd::FileDialog::new().set_directory(&folder).pick_files() else {
-            return false;
-        };
-
-        if paths.is_empty() {
-            return false;
-        }
-
-        let mut invalid_entries = Vec::new();
-        let mut added_any = false;
-
-        for path in paths {
-            let Ok(relative) = path.strip_prefix(&folder) else {
-                invalid_entries.push(format!(
-                    "{} (must be in the selected folder)",
-                    path.display()
-                ));
-                continue;
-            };
-
-            if relative.components().count() != 1 {
-                invalid_entries.push(format!(
-                    "{} (must be in the selected folder)",
-                    path.display()
-                ));
-                continue;
-            }
-
-            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-                invalid_entries.push(format!("{} (invalid file name)", path.display()));
-                continue;
-            };
-
-            match self.add_file_entry(kind, name) {
-                Ok(_) => {
-                    added_any = true;
-                }
-                Err(err) => {
-                    invalid_entries.push(err);
-                }
-            }
-        }
-
-        if invalid_entries.is_empty() {
-            if added_any {
-                self.clear_error_message();
-                self.packer_state.status.clear();
-            }
-        } else {
-            let message = format!(
-                "Some files could not be added to the {} list",
-                list_label.label()
-            );
-            self.set_error_message((message, invalid_entries));
-        }
-
-        added_any
-    }
-
-    pub(crate) fn add_file_from_manual_entry(&mut self, kind: FileListKind, entry: &str) -> bool {
-        let list_kind: ListKind = kind.into();
-        match self.add_file_entry(kind, entry) {
-            Ok(_) => {
-                self.clear_error_message();
-                self.packer_state.status.clear();
-                self.packer_state.clear_manual_entry(kind);
-                true
-            }
-            Err(err) => {
-                let message = format!("Could not add the entry to the {} list", list_kind.label());
-                self.set_error_message((message, vec![err]));
-                false
-            }
-        }
-    }
-
-    pub(crate) fn remove_selected_file_from_list(&mut self, kind: FileListKind) -> bool {
-        let selection = self.packer_state.file_list_selection(kind);
-        if let Some(index) = selection {
-            let removed = self
-                .packer_state
-                .remove_file_list_entry(kind, index)
-                .is_some();
-            if removed {
-                self.clear_error_message();
-                self.packer_state.status.clear();
-            }
-            removed
-        } else {
-            false
-        }
-    }
-
-    fn validate_icon_sys_settings(&self) -> Result<(), String> {
-        if self.icon_sys_enabled && !self.icon_sys_use_existing {
-            let line1 = &self.icon_sys_title_line1;
-            let line2 = &self.icon_sys_title_line2;
-
-            if line1.chars().count() > ICON_SYS_TITLE_CHAR_LIMIT {
-                return Err(format!(
-                    "Icon.sys line 1 cannot exceed {ICON_SYS_TITLE_CHAR_LIMIT} characters"
-                ));
-            }
-            if line2.chars().count() > ICON_SYS_TITLE_CHAR_LIMIT {
-                return Err(format!(
-                    "Icon.sys line 2 cannot exceed {ICON_SYS_TITLE_CHAR_LIMIT} characters"
-                ));
-            }
-            let title_is_valid = |value: &str| {
-                !value.chars().any(|c| c.is_control()) && sjis::is_roundtrip_sjis(value)
-            };
-            if !title_is_valid(line1) || !title_is_valid(line2) {
-                return Err(
-                    "Icon.sys titles must contain characters representable in Shift-JIS"
-                        .to_string(),
-                );
-            }
-
-            let has_content = line1.chars().any(|c| !c.is_whitespace())
-                || line2.chars().any(|c| !c.is_whitespace());
-            if !has_content {
-                return Err(
-                    "Provide at least one non-space character for the icon.sys title".to_string(),
-                );
-            }
-
-            self.selected_icon_flag_value()?;
-        }
-
-        Ok(())
-    }
-
-    fn config_from_state(&self) -> Result<psu_packer::Config, String> {
-        let include = if self.packer_state.include_files.is_empty() {
-            None
-        } else {
-            Some(self.packer_state.include_files.clone())
-        };
-
-        let mut exclude = self.packer_state.exclude_files.clone();
-        if !exclude.iter().any(|entry| entry == "psu.toml") {
-            exclude.push("psu.toml".to_string());
-        }
-        let exclude = Some(exclude);
-
-        let icon_sys = if self.icon_sys_enabled && !self.icon_sys_use_existing {
-            let encoded_line1 = sjis::encode_sjis(&self.icon_sys_title_line1).map_err(|_| {
-                "Icon.sys titles must contain characters representable in Shift-JIS".to_string()
-            })?;
-            let linebreak_pos = encoded_line1.len() as u16;
-            let combined_title =
-                format!("{}{}", self.icon_sys_title_line1, self.icon_sys_title_line2);
-            let flag_value = self.selected_icon_flag_value()?;
-
-            Some(psu_packer::IconSysConfig {
-                flags: psu_packer::IconSysFlags::new(flag_value),
-                title: combined_title,
-                linebreak_pos: Some(linebreak_pos),
-                preset: self.icon_sys_state.selected_preset.clone(),
-                background_transparency: Some(self.icon_sys_state.background_transparency),
-                background_colors: Some(self.icon_sys_state.background_colors.to_vec()),
-                light_directions: Some(self.icon_sys_state.light_directions.to_vec()),
-                light_colors: Some(self.icon_sys_state.light_colors.to_vec()),
-                ambient_color: Some(self.icon_sys_state.ambient_color),
-            })
-        } else {
-            None
-        };
-
-        if self.packer_state.folder_base_name.trim().is_empty() {
-            return Err("PSU name cannot be empty".to_string());
-        }
-
-        let name = self.packer_state.folder_name();
-
-        Ok(psu_packer::Config {
-            name,
-            timestamp: self.packer_state.timestamp,
-            include,
-            exclude,
-            icon_sys,
-        })
-    }
-
-    #[cfg(feature = "psu-toml-editor")]
-    pub(crate) fn refresh_psu_toml_editor(&mut self) {
-        if self.packer_state.folder.is_none() {
-            self.psu_toml_sync_blocked = false;
-            return;
-        }
-
-        if self.psu_toml_editor.modified {
-            self.psu_toml_sync_blocked = true;
-            return;
-        }
-
-        let config = match self.config_from_state() {
-            Ok(config) => config,
-            Err(_) => {
-                self.psu_toml_sync_blocked = true;
-                return;
-            }
-        };
-
-        match config.to_toml_string() {
-            Ok(serialized) => {
-                self.psu_toml_editor.set_content(serialized);
-                self.psu_toml_sync_blocked = false;
-            }
-            Err(_) => {
-                self.psu_toml_sync_blocked = true;
-            }
-        }
-    }
-
-    #[cfg(not(feature = "psu-toml-editor"))]
-    pub(crate) fn refresh_psu_toml_editor(&mut self) {
-        self.psu_toml_sync_blocked = false;
-    }
 }

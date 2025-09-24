@@ -4,6 +4,8 @@ use crate::{
     state::{self, EditorTab, PackerApp},
     ui::{self, theme},
 };
+use gui_core::actions::{self, Action, ActionDescriptor};
+use gui_core::ActionDispatcher;
 
 pub trait View<TState> {
     fn show(&mut self, ui: &mut egui::Ui, state: &mut TState);
@@ -23,8 +25,7 @@ impl eframe::App for PackerApp {
         self.poll_pack_job();
 
         if ctx.input(|i| i.viewport().close_requested()) && !self.exit_confirmed {
-            self.exit_confirmed = false;
-            self.show_exit_confirm = true;
+            self.trigger_action(Action::ShowExitConfirmation);
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
 
@@ -78,18 +79,12 @@ impl eframe::App for PackerApp {
                 egui::menu::bar(ui, |ui| {
                     ui::file_picker::file_menu(self, ui);
                     ui.menu_button("View", |ui| {
-                        if ui.button("Zoom In").clicked() {
-                            self.zoom_factor = (self.zoom_factor + 0.1).min(2.0);
-                            ui.close_menu();
-                        }
-                        if ui.button("Zoom Out").clicked() {
-                            self.zoom_factor = (self.zoom_factor - 0.1).max(0.5);
-                            ui.close_menu();
-                        }
-                        if ui.button("Reset Zoom").clicked() {
-                            self.zoom_factor = 1.0;
-                            ui.close_menu();
-                        }
+                        let zoom_in = ActionDescriptor::new(Action::ZoomIn, "Zoom In");
+                        actions::action_button(ui, self, &zoom_in);
+                        let zoom_out = ActionDescriptor::new(Action::ZoomOut, "Zoom Out");
+                        actions::action_button(ui, self, &zoom_out);
+                        let reset_zoom = ActionDescriptor::new(Action::ResetZoom, "Reset Zoom");
+                        actions::action_button(ui, self, &reset_zoom);
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(12.0);

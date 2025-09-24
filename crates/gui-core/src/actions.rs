@@ -1,3 +1,4 @@
+use chrono::NaiveDateTime;
 use egui::{Button, Context, KeyboardShortcut, Ui, WidgetText};
 
 use crate::state::SasPrefix;
@@ -41,6 +42,7 @@ pub enum TimestampAction {
     SyncAfterSourceUpdate,
     ApplyPlannedTimestamp,
     ResetRulesToDefault,
+    SetManualTimestamp(Option<NaiveDateTime>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -54,6 +56,7 @@ pub enum FileListAction {
     Browse(FileListKind),
     ManualAdd(FileListKind),
     RemoveSelected(FileListKind),
+    SelectEntry(FileListKind, Option<usize>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -69,6 +72,7 @@ pub enum IconSysAction {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Action {
     OpenProject,
+    SelectProjectFolder,
     PackPsu,
     UpdatePsu,
     ExportPsuToFolder,
@@ -79,6 +83,14 @@ pub enum Action {
     CreateMetadataTemplate(MetadataTarget),
     OpenSettings,
     OpenEditor(EditorAction),
+    ZoomIn,
+    ZoomOut,
+    ResetZoom,
+    ConfirmPack,
+    CancelPack,
+    ShowExitConfirmation,
+    ConfirmExit,
+    CancelExit,
     Metadata(MetadataAction),
     Timestamp(TimestampAction),
     FileList(FileListAction),
