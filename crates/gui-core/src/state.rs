@@ -1797,6 +1797,9 @@ impl ActionDispatcher for AppState {
                 TimestampAction::ResetRulesToDefault => {
                     self.packer.reset_timestamp_rules_to_default();
                 }
+                TimestampAction::SetManualTimestamp(timestamp) => {
+                    self.packer.set_manual_timestamp(timestamp);
+                }
             },
             Action::FileList(file_action) => match file_action {
                 FileListAction::Browse(kind) => {
@@ -1816,6 +1819,9 @@ impl ActionDispatcher for AppState {
                     if let Some(index) = self.packer.file_list_selection(kind) {
                         self.packer.remove_file_list_entry(kind, index);
                     }
+                }
+                FileListAction::SelectEntry(kind, selection) => {
+                    self.packer.select_file_list_entry(kind, selection);
                 }
             },
             Action::IconSys(icon_action) => match icon_action {

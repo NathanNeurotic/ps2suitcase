@@ -4,8 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::ui;
 use crate::ui::theme;
+use crate::{ui, ICON_SYS_TITLE_CHAR_LIMIT};
 use eframe::egui::{self, Widget};
 #[cfg(test)]
 use gui_core::state::{SasPrefix, REQUIRED_PROJECT_FILES, TIMESTAMP_RULES_FILE};
@@ -21,7 +21,7 @@ use gui_core::{
 };
 use icon_sys_ui::IconSysState;
 use indexmap::IndexMap;
-use ps2_filetypes::{templates, IconSys, TitleCfg};
+use ps2_filetypes::{sjis, templates, IconSys, TitleCfg};
 use psu_packer::split_icon_sys_title;
 #[cfg(any(test, feature = "psu-toml-editor"))]
 #[cfg(feature = "psu-toml-editor")]
@@ -269,7 +269,15 @@ impl PackerApp {
         );
         let response = ui.add(widget);
         if response.clicked() {
-            self.editor_tab = tab;
+            let action = match tab {
+                EditorTab::PsuSettings => Action::OpenEditor(EditorAction::PsuSettings),
+                #[cfg(feature = "psu-toml-editor")]
+                EditorTab::PsuToml => Action::OpenEditor(EditorAction::PsuToml),
+                EditorTab::TitleCfg => Action::OpenEditor(EditorAction::TitleCfg),
+                EditorTab::IconSys => Action::OpenEditor(EditorAction::IconSys),
+                EditorTab::TimestampAuto => Action::OpenEditor(EditorAction::TimestampAutomation),
+            };
+            self.trigger_action(action);
         }
     }
 
@@ -634,6 +642,206 @@ impl PackerApp {
         })
     }
 
+    pub(crate) fn select_project_folder_dialog(&mut self) -> bool {
+        let Some(folder) = rfd::FileDialog::new().pick_folder() else {
+            return false;
+        };
+
+        ui::file_picker::load_project_files(self, &folder);
+        if self.icon_sys_enabled {
+            self.open_icon_sys_tab();
+        } else {
+            self.open_psu_settings_tab();
+        }
+
+        true
+    }
+
+    pub(crate) fn ensure_output_destination_selected(&mut self) -> bool {
+        if self.packer_state.output.trim().is_empty() {
+            if let Some(path) = self.packer_state.default_output_path() {
+                self.packer_state.output = path.display().to_string();
+            }
+        }
+
+        if self.packer_state.output.trim().is_empty() {
+            return self.choose_output_destination_dialog();
+        }
+
+        true
+    }
+
+    pub(crate) fn choose_output_destination_dialog(&mut self) -> bool {
+        let mut dialog = rfd::FileDialog::new().add_filter("PSU", &["psu"]);
+
+        let trimmed_output = self.packer_state.output.trim();
+        if trimmed_output.is_empty() {
+            if let Some(default_dir) = self.packer_state.default_output_directory(None) {
+                dialog = dialog.set_directory(default_dir);
+            }
+            if let Some(default_name) = self.packer_state.default_output_file_name() {
+                dialog = dialog.set_file_name(&default_name);
+            }
+        } else {
+            let current_path = Path::new(trimmed_output);
+            if let Some(parent) = current_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    dialog = dialog.set_directory(parent);
+                } else if let Some(default_dir) = self.packer_state.default_output_directory(None) {
+                    dialog = dialog.set_directory(default_dir);
+                }
+            } else if let Some(default_dir) = self.packer_state.default_output_directory(None) {
+                dialog = dialog.set_directory(default_dir);
+            }
+
+            if let Some(existing_name) = current_path.file_name().and_then(|name| name.to_str()) {
+                dialog = dialog.set_file_name(existing_name);
+            } else if let Some(default_name) = self.packer_state.default_output_file_name() {
+                dialog = dialog.set_file_name(&default_name);
+            }
+        }
+
+        if let Some(mut file) = dialog.save_file() {
+            let has_psu_extension = file
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("psu"))
+                .unwrap_or(false);
+
+            if !has_psu_extension {
+                file.set_extension("psu");
+            }
+
+            self.packer_state.output = file.display().to_string();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn add_files_via_dialog(&mut self, kind: FileListKind) -> bool {
+        let Some(folder) = self.packer_state.folder.clone() else {
+            return false;
+        };
+
+        let Some(paths) = rfd::FileDialog::new().set_directory(&folder).pick_files() else {
+            return false;
+        };
+
+        if paths.is_empty() {
+            return false;
+        }
+
+        let mut invalid_entries = Vec::new();
+        let mut added_any = false;
+
+        for path in paths {
+            let Ok(relative) = path.strip_prefix(&folder) else {
+                invalid_entries.push(format!(
+                    "{} (must be in the selected folder)",
+                    path.display()
+                ));
+                continue;
+            };
+
+            if relative.components().count() != 1 {
+                invalid_entries.push(format!(
+                    "{} (must be in the selected folder)",
+                    path.display()
+                ));
+                continue;
+            }
+
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                invalid_entries.push(format!("{} (invalid file name)", path.display()));
+                continue;
+            };
+
+            match self.add_file_entry(kind, name) {
+                Ok(_) => {
+                    added_any = true;
+                }
+                Err(err) => {
+                    invalid_entries.push(err);
+                }
+            }
+        }
+
+        if invalid_entries.is_empty() {
+            if added_any {
+                self.clear_error_message();
+                self.packer_state.status.clear();
+            }
+        } else {
+            let list_label = match kind {
+                FileListKind::Include => "Include files",
+                FileListKind::Exclude => "Exclude files",
+            };
+            let message = format!("Some files could not be added to the {list_label} list");
+            self.set_error_message((message, invalid_entries));
+        }
+
+        added_any
+    }
+
+    pub(crate) fn add_file_from_manual_entry(&mut self, kind: FileListKind, entry: &str) -> bool {
+        let list_label = match kind {
+            FileListKind::Include => "Include files",
+            FileListKind::Exclude => "Exclude files",
+        };
+
+        match self.add_file_entry(kind, entry) {
+            Ok(_) => {
+                self.clear_error_message();
+                self.packer_state.status.clear();
+                self.packer_state.clear_manual_entry(kind);
+                true
+            }
+            Err(err) => {
+                let message = format!("Could not add the entry to the {list_label} list");
+                self.set_error_message((message, vec![err]));
+                false
+            }
+        }
+    }
+
+    pub(crate) fn remove_selected_file_from_list(&mut self, kind: FileListKind) -> bool {
+        let selection = self.packer_state.file_list_selection(kind);
+        if let Some(index) = selection {
+            let removed = self
+                .packer_state
+                .remove_file_list_entry(kind, index)
+                .is_some();
+            if removed {
+                self.clear_error_message();
+                self.packer_state.status.clear();
+            }
+            removed
+        } else {
+            false
+        }
+    }
+
+    fn add_file_entry(&mut self, kind: FileListKind, entry: &str) -> Result<usize, String> {
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            return Err("File name cannot be empty".to_string());
+        }
+
+        if self
+            .packer_state
+            .file_list_entries(kind)
+            .iter()
+            .any(|existing| existing == trimmed)
+        {
+            return Err(format!("{trimmed} (already listed)"));
+        }
+
+        Ok(self
+            .packer_state
+            .add_file_list_entry(kind, trimmed.to_string()))
+    }
+
     fn determine_update_destination(&self) -> Result<PathBuf, String> {
         self.packer_state.determine_update_destination()
     }
@@ -942,6 +1150,138 @@ impl PackerApp {
         }
     }
 
+    pub(crate) fn build_config(&self) -> Result<psu_packer::Config, String> {
+        self.validate_icon_sys_settings()?;
+        self.config_from_state()
+    }
+
+    fn config_from_state(&self) -> Result<psu_packer::Config, String> {
+        let include = if self.packer_state.include_files.is_empty() {
+            None
+        } else {
+            Some(self.packer_state.include_files.clone())
+        };
+
+        let mut exclude = self.packer_state.exclude_files.clone();
+        if !exclude.iter().any(|entry| entry == "psu.toml") {
+            exclude.push("psu.toml".to_string());
+        }
+        let exclude = Some(exclude);
+
+        let icon_sys = if self.icon_sys_enabled && !self.icon_sys_use_existing {
+            let encoded_line1 = sjis::encode_sjis(&self.icon_sys_title_line1).map_err(|_| {
+                "Icon.sys titles must contain characters representable in Shift-JIS".to_string()
+            })?;
+            let linebreak_pos = encoded_line1.len() as u16;
+            let combined_title =
+                format!("{}{}", self.icon_sys_title_line1, self.icon_sys_title_line2);
+            let flag_value = self.selected_icon_flag_value()?;
+
+            Some(psu_packer::IconSysConfig {
+                flags: psu_packer::IconSysFlags::new(flag_value),
+                title: combined_title,
+                linebreak_pos: Some(linebreak_pos),
+                preset: self.icon_sys_state.selected_preset.clone(),
+                background_transparency: Some(self.icon_sys_state.background_transparency),
+                background_colors: Some(self.icon_sys_state.background_colors.to_vec()),
+                light_directions: Some(self.icon_sys_state.light_directions.to_vec()),
+                light_colors: Some(self.icon_sys_state.light_colors.to_vec()),
+                ambient_color: Some(self.icon_sys_state.ambient_color),
+            })
+        } else {
+            None
+        };
+
+        if self.packer_state.folder_base_name.trim().is_empty() {
+            return Err("PSU name cannot be empty".to_string());
+        }
+
+        let name = self.packer_state.folder_name();
+
+        Ok(psu_packer::Config {
+            name,
+            timestamp: self.packer_state.timestamp,
+            include,
+            exclude,
+            icon_sys,
+        })
+    }
+
+    fn validate_icon_sys_settings(&self) -> Result<(), String> {
+        if self.icon_sys_enabled && !self.icon_sys_use_existing {
+            let line1 = &self.icon_sys_title_line1;
+            let line2 = &self.icon_sys_title_line2;
+
+            if line1.chars().count() > ICON_SYS_TITLE_CHAR_LIMIT {
+                return Err(format!(
+                    "Icon.sys line 1 cannot exceed {ICON_SYS_TITLE_CHAR_LIMIT} characters"
+                ));
+            }
+            if line2.chars().count() > ICON_SYS_TITLE_CHAR_LIMIT {
+                return Err(format!(
+                    "Icon.sys line 2 cannot exceed {ICON_SYS_TITLE_CHAR_LIMIT} characters"
+                ));
+            }
+            let title_is_valid = |value: &str| {
+                !value.chars().any(|c| c.is_control()) && sjis::is_roundtrip_sjis(value)
+            };
+            if !title_is_valid(line1) || !title_is_valid(line2) {
+                return Err(
+                    "Icon.sys titles must contain characters representable in Shift-JIS"
+                        .to_string(),
+                );
+            }
+
+            let has_content = line1.chars().any(|c| !c.is_whitespace())
+                || line2.chars().any(|c| !c.is_whitespace());
+            if !has_content {
+                return Err(
+                    "Provide at least one non-space character for the icon.sys title".to_string(),
+                );
+            }
+
+            self.selected_icon_flag_value()?;
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "psu-toml-editor")]
+    pub(crate) fn refresh_psu_toml_editor(&mut self) {
+        if self.packer_state.folder.is_none() {
+            self.psu_toml_sync_blocked = false;
+            return;
+        }
+
+        if self.psu_toml_editor.modified {
+            self.psu_toml_sync_blocked = true;
+            return;
+        }
+
+        let config = match self.config_from_state() {
+            Ok(config) => config,
+            Err(_) => {
+                self.psu_toml_sync_blocked = true;
+                return;
+            }
+        };
+
+        match config.to_toml_string() {
+            Ok(serialized) => {
+                self.psu_toml_editor.set_content(serialized);
+                self.psu_toml_sync_blocked = false;
+            }
+            Err(_) => {
+                self.psu_toml_sync_blocked = true;
+            }
+        }
+    }
+
+    #[cfg(not(feature = "psu-toml-editor"))]
+    pub(crate) fn refresh_psu_toml_editor(&mut self) {
+        self.psu_toml_sync_blocked = false;
+    }
+
     #[cfg(test)]
     pub(crate) fn pack_job_active(&self) -> bool {
         self.packer_state.is_pack_running()
@@ -956,6 +1296,13 @@ impl ActionDispatcher for PackerApp {
                     && self.packer_state.missing_required_project_files.is_empty()
             }
             Action::ChooseOutputDestination => !self.is_pack_running(),
+            Action::SelectProjectFolder => !self.is_pack_running(),
+            Action::ConfirmPack | Action::CancelPack => {
+                self.packer_state.pending_pack_action.is_some()
+            }
+            Action::ShowExitConfirmation => !self.exit_confirmed,
+            Action::ConfirmExit | Action::CancelExit => self.show_exit_confirm,
+            Action::ZoomIn | Action::ZoomOut | Action::ResetZoom => true,
             #[cfg(feature = "psu-toml-editor")]
             Action::EditMetadata(MetadataTarget::PsuToml)
             | Action::CreateMetadataTemplate(MetadataTarget::PsuToml) => true,
@@ -970,6 +1317,7 @@ impl ActionDispatcher for PackerApp {
                 FileListKind::Include => self.packer_state.selected_include.is_some(),
                 FileListKind::Exclude => self.packer_state.selected_exclude.is_some(),
             },
+            Action::FileList(FileListAction::SelectEntry(_, _)) => true,
             Action::IconSys(IconSysAction::UseExisting) => {
                 self.icon_sys_enabled && self.icon_sys_existing.is_some()
             }
@@ -979,6 +1327,7 @@ impl ActionDispatcher for PackerApp {
             | Action::IconSys(IconSysAction::ResetFields) => {
                 self.icon_sys_enabled && !self.icon_sys_use_existing
             }
+            Action::Timestamp(TimestampAction::SetManualTimestamp(_)) => true,
             _ => true,
         }
     }
@@ -986,12 +1335,42 @@ impl ActionDispatcher for PackerApp {
     fn trigger_action(&mut self, action: Action) {
         match action {
             Action::OpenProject => self.handle_open_psu(),
+            Action::SelectProjectFolder => {
+                self.select_project_folder_dialog();
+            }
             Action::PackPsu => self.process_pack_request(),
             Action::UpdatePsu => self.process_update_psu_request(),
             Action::ExportPsuToFolder => self.process_save_as_folder_with_contents(),
             Action::ChooseOutputDestination => {
                 self.packer_state.request_output_destination_dialog();
                 self.choose_output_destination_dialog();
+            }
+            Action::ZoomIn => {
+                self.zoom_factor = (self.zoom_factor + 0.1).min(2.0);
+            }
+            Action::ZoomOut => {
+                self.zoom_factor = (self.zoom_factor - 0.1).max(0.5);
+            }
+            Action::ResetZoom => {
+                self.zoom_factor = 1.0;
+            }
+            Action::ConfirmPack => {
+                self.confirm_pending_pack_action();
+            }
+            Action::CancelPack => {
+                self.cancel_pending_pack_action();
+            }
+            Action::ShowExitConfirmation => {
+                self.exit_confirmed = false;
+                self.show_exit_confirm = true;
+            }
+            Action::ConfirmExit => {
+                self.exit_confirmed = true;
+                self.show_exit_confirm = false;
+            }
+            Action::CancelExit => {
+                self.exit_confirmed = false;
+                self.show_exit_confirm = false;
             }
             Action::EditMetadata(MetadataTarget::TitleCfg) => {
                 self.open_title_cfg_tab();
@@ -1069,6 +1448,11 @@ impl ActionDispatcher for PackerApp {
                 TimestampAction::ResetRulesToDefault => {
                     self.reset_timestamp_rules_to_default();
                 }
+                TimestampAction::SetManualTimestamp(timestamp) => {
+                    if self.packer_state.set_manual_timestamp(timestamp) {
+                        self.refresh_psu_toml_editor();
+                    }
+                }
             },
             Action::FileList(file_action) => match file_action {
                 FileListAction::Browse(kind) => {
@@ -1103,6 +1487,9 @@ impl ActionDispatcher for PackerApp {
                     if self.remove_selected_file_from_list(kind) {
                         self.refresh_psu_toml_editor();
                     }
+                }
+                FileListAction::SelectEntry(kind, selection) => {
+                    self.packer_state.select_file_list_entry(kind, selection);
                 }
             },
             Action::IconSys(icon_action) => match icon_action {
@@ -1278,7 +1665,7 @@ mod packer_app_tests {
         );
 
         let missing_before = app.packer_state.missing_required_project_files.clone();
-        app.cancel_pending_pack_action();
+        app.trigger_action(Action::CancelPack);
 
         assert!(
             app.packer_state.pending_pack_action.is_none(),
@@ -1310,7 +1697,7 @@ mod packer_app_tests {
         );
         assert!(!app.test_pack_job_started);
 
-        app.confirm_pending_pack_action();
+        app.trigger_action(Action::ConfirmPack);
 
         assert!(
             app.packer_state.pending_pack_action.is_none(),
@@ -1323,6 +1710,40 @@ mod packer_app_tests {
         assert!(app.pack_job_active(), "pack job handle should be created");
 
         wait_for_pack_completion(&mut app);
+    }
+
+    #[test]
+    fn exit_confirmation_actions_update_flags() {
+        let mut app = PackerApp::default();
+        assert!(!app.show_exit_confirm);
+
+        app.trigger_action(Action::ShowExitConfirmation);
+        assert!(app.show_exit_confirm);
+        assert!(!app.exit_confirmed);
+
+        app.trigger_action(Action::CancelExit);
+        assert!(!app.show_exit_confirm);
+        assert!(!app.exit_confirmed);
+
+        app.trigger_action(Action::ShowExitConfirmation);
+        app.trigger_action(Action::ConfirmExit);
+        assert!(app.exit_confirmed);
+        assert!(!app.show_exit_confirm);
+    }
+
+    #[test]
+    fn zoom_actions_adjust_factor() {
+        let mut app = PackerApp::default();
+        let initial = app.zoom_factor;
+
+        app.trigger_action(Action::ZoomIn);
+        assert!(app.zoom_factor > initial);
+
+        app.trigger_action(Action::ResetZoom);
+        assert!((app.zoom_factor - 1.0).abs() < f32::EPSILON);
+
+        app.trigger_action(Action::ZoomOut);
+        assert!(app.zoom_factor < 1.0);
     }
 
     #[test]

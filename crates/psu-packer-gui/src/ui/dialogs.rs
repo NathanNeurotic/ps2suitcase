@@ -1,6 +1,8 @@
 use eframe::egui;
 
 use crate::PackerApp;
+use gui_core::actions::Action;
+use gui_core::ActionDispatcher;
 
 pub(crate) fn pack_confirmation(app: &mut PackerApp, ctx: &egui::Context) {
     if let Some(missing) = app.packer_state.pending_pack_missing_files() {
@@ -15,10 +17,10 @@ pub(crate) fn pack_confirmation(app: &mut PackerApp, ctx: &egui::Context) {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui.button("Proceed").clicked() {
-                        app.confirm_pending_pack_action();
+                        app.trigger_action(Action::ConfirmPack);
                     }
                     if ui.button("Go Back").clicked() {
-                        app.cancel_pending_pack_action();
+                        app.trigger_action(Action::CancelPack);
                     }
                 });
             });
@@ -38,12 +40,10 @@ pub(crate) fn exit_confirmation(app: &mut PackerApp, ctx: &egui::Context) {
                     let no_clicked = ui.button("No").clicked();
 
                     if yes_clicked {
-                        app.exit_confirmed = true;
-                        app.show_exit_confirm = false;
+                        app.trigger_action(Action::ConfirmExit);
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     } else if no_clicked {
-                        app.exit_confirmed = false;
-                        app.show_exit_confirm = false;
+                        app.trigger_action(Action::CancelExit);
                     }
                 });
             });

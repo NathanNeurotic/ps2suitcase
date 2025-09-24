@@ -93,11 +93,8 @@ fn file_menu_contents(
 
     ui.separator();
 
-    if ui.button("Exit").clicked() {
-        app.show_exit_confirm = true;
-        app.exit_confirmed = false;
-        ui.close_menu();
-    }
+    let exit_descriptor = ActionDescriptor::new(Action::ShowExitConfirmation, "Exit");
+    actions::action_button(ui, app, &exit_descriptor);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -184,30 +181,15 @@ pub(crate) fn folder_section(app: &mut PackerApp, ui: &mut egui::Ui) {
             let spacing = ui.spacing().item_spacing.x;
             ui.spacing_mut().item_spacing.x = spacing.max(8.0);
 
-            if ui
-                .button("Select folder")
-                .on_hover_text("Pick the source directory to load configuration values.")
-                .clicked()
-            {
-                if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                    load_project_files(app, &folder);
-                    if app.icon_sys_enabled {
-                        app.open_icon_sys_tab();
-                    } else {
-                        app.open_psu_settings_tab();
-                    }
-                }
-            }
+            let select_folder_descriptor =
+                ActionDescriptor::new(Action::SelectProjectFolder, "Select folder");
+            actions::action_button(ui, app, &select_folder_descriptor)
+                .on_hover_text("Pick the source directory to load configuration values.");
 
-            if ui
-                .button("Load PSU...")
-                .on_hover_text(
-                    "Open an existing PSU archive to populate the editor from its metadata.",
-                )
-                .clicked()
-            {
-                app.handle_open_psu();
-            }
+            let open_psu_descriptor = ActionDescriptor::new(Action::OpenProject, "Load PSU...");
+            actions::action_button(ui, app, &open_psu_descriptor).on_hover_text(
+                "Open an existing PSU archive to populate the editor from its metadata.",
+            );
         });
 
         if let Some(folder) = &app.packer_state.folder {

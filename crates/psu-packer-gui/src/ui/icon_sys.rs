@@ -1,6 +1,8 @@
 use eframe::egui;
 
 use crate::{ui::theme, PackerApp};
+use gui_core::actions::{Action, IconSysAction};
+use gui_core::ActionDispatcher;
 use icon_sys_ui::{
     background_editor, flag_selector, lighting_editor, preset_selector, title_editor,
     BackgroundSectionState, FlagSectionState, IconSysState, LightingSectionState,
@@ -14,48 +16,41 @@ pub(crate) fn icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
 
     let mut config_changed = false;
 
-    let checkbox = ui.checkbox(&mut app.icon_sys_enabled, "Enable icon.sys metadata");
+    let mut icon_sys_enabled = app.icon_sys_enabled;
+    let checkbox = ui.checkbox(&mut icon_sys_enabled, "Enable icon.sys metadata");
     let checkbox_changed = checkbox.changed();
     checkbox
         .on_hover_text("Use an existing icon.sys file or generate a new one when packing the PSU.");
 
     if checkbox_changed {
+        let action = if icon_sys_enabled {
+            Action::IconSys(IconSysAction::Enable)
+        } else {
+            Action::IconSys(IconSysAction::Disable)
+        };
+        app.trigger_action(action);
         config_changed = true;
     }
 
-    if !app.icon_sys_enabled {
-        app.icon_sys_use_existing = false;
-    } else if app.icon_sys_existing.is_none() {
-        app.icon_sys_use_existing = false;
-    }
-
     if app.icon_sys_enabled {
-        if let Some(existing_icon) = app.icon_sys_existing.clone() {
-            let previous = app.icon_sys_use_existing;
+        if let Some(_existing_icon) = app.icon_sys_existing.clone() {
             ui.horizontal(|ui| {
                 ui.label("Mode:");
-                let use_existing = ui.selectable_value(
-                    &mut app.icon_sys_use_existing,
-                    true,
-                    "Use existing icon.sys",
-                );
-                if use_existing.changed() {
+                let mut use_existing = app.icon_sys_use_existing;
+                let use_existing_response =
+                    ui.selectable_value(&mut use_existing, true, "Use existing icon.sys");
+                let mut generate_new = app.icon_sys_use_existing;
+                let generate_new_response =
+                    ui.selectable_value(&mut generate_new, false, "Generate new icon.sys");
+
+                if use_existing_response.changed() && use_existing {
+                    app.trigger_action(Action::IconSys(IconSysAction::UseExisting));
                     config_changed = true;
-                }
-                let generate_new = ui.selectable_value(
-                    &mut app.icon_sys_use_existing,
-                    false,
-                    "Generate new icon.sys",
-                );
-                if generate_new.changed() {
+                } else if generate_new_response.changed() && !generate_new {
+                    app.trigger_action(Action::IconSys(IconSysAction::GenerateNew));
                     config_changed = true;
                 }
             });
-
-            if app.icon_sys_use_existing && !previous {
-                app.apply_icon_sys_file(&existing_icon);
-                config_changed = true;
-            }
 
             if app.icon_sys_use_existing {
                 ui.small(concat!(
@@ -169,7 +164,7 @@ pub(crate) fn icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
             )
         });
         if background_response.inner.changed {
-            app.clear_icon_sys_preset();
+            app.trigger_action(Action::IconSys(IconSysAction::ClearPreset));
             inner_changed = true;
         }
 
@@ -188,7 +183,7 @@ pub(crate) fn icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
             )
         });
         if lighting_response.inner.changed {
-            app.clear_icon_sys_preset();
+            app.trigger_action(Action::IconSys(IconSysAction::ClearPreset));
             inner_changed = true;
         }
 
