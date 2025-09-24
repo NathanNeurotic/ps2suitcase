@@ -8,7 +8,7 @@ use std::{
     thread,
 };
 
-use crate::actions::{Action, ActionDispatcher, MetadataTarget};
+use crate::actions::{Action, ActionDispatcher, FileListKind, MetadataTarget};
 use crate::commands::AppEvent;
 use crate::validation::{sanitize_seconds_between_items, timestamp_rules_equal};
 use psu_packer::sas::{
@@ -18,7 +18,7 @@ use psu_packer::sas::{
 use tempfile::{tempdir, TempDir};
 
 use chrono::NaiveDateTime;
-use ps2_filetypes::{PSUEntryKind, PSU};
+use ps2_filetypes::{templates, PSUEntryKind, PSU};
 
 pub const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 pub const TIMESTAMP_RULES_FILE: &str = "timestamp_rules.json";
@@ -519,6 +519,7 @@ pub struct PackerState {
     pub source_present_last_frame: bool,
     pub pack_job: Option<PackJob>,
     pub temp_workspace: Option<TempDir>,
+    pub events: Vec<AppEvent>,
 }
 
 impl Default for PackerState {
@@ -556,6 +557,7 @@ impl Default for PackerState {
             source_present_last_frame: false,
             pack_job: None,
             temp_workspace: None,
+            events: Vec::new(),
         }
     }
 }
@@ -645,6 +647,62 @@ impl PackerState {
         self.pending_pack_action
             .as_ref()
             .map(|action| action.missing_files())
+    }
+
+    pub fn take_events(&mut self) -> Vec<AppEvent> {
+        std::mem::take(&mut self.events)
+    }
+
+    pub fn request_output_destination_dialog(&mut self) {
+        let default_directory = self.default_output_directory(None);
+        let default_file_name = self.default_output_file_name();
+        self.events.push(AppEvent::ChooseOutputDestination {
+            default_directory,
+            default_file_name,
+        });
+    }
+
+    pub fn request_file_list_entries(&mut self, kind: FileListKind) {
+        if let Some(folder) = self.folder.clone() {
+            self.events.push(AppEvent::BrowseFileListEntries {
+                project_root: folder,
+                kind,
+            });
+        }
+    }
+
+    pub fn request_export_folder_dialog(&mut self) {
+        let default_directory = self.default_output_directory(None);
+        self.events
+            .push(AppEvent::ChooseExportFolder { default_directory });
+    }
+
+    pub fn request_metadata_template(&mut self, target: MetadataTarget) {
+        let template = match target {
+            MetadataTarget::PsuToml => Some(templates::PSU_TOML_TEMPLATE.to_string()),
+            MetadataTarget::TitleCfg => Some(templates::TITLE_CFG_TEMPLATE.to_string()),
+            MetadataTarget::IconSys => None,
+        };
+
+        if let Some(template) = template {
+            let destination = self.folder.clone();
+            self.events.push(AppEvent::CreateMetadataTemplate {
+                target,
+                template,
+                destination,
+            });
+        }
+    }
+
+    pub fn request_pack_confirmation(&mut self) {
+        if let Some(missing_required_files) = self
+            .pending_pack_missing_files()
+            .map(|files| files.to_vec())
+        {
+            self.events.push(AppEvent::ShowPackConfirmation {
+                missing_required_files,
+            });
+        }
     }
 
     pub fn confirm_pending_pack_action(
@@ -1436,6 +1494,13 @@ impl AppState {
         self.events.push(AppEvent::SaveFile);
     }
 
+    pub fn choose_output_destination(&mut self) {
+        self.events.push(AppEvent::ChooseOutputDestination {
+            default_directory: self.opened_folder.clone(),
+            default_file_name: None,
+        });
+    }
+
     pub fn create_icn(&mut self) {
         self.events.push(AppEvent::CreateICN);
     }
@@ -1469,6 +1534,7 @@ impl ActionDispatcher for AppState {
     fn is_action_enabled(&self, action: Action) -> bool {
         match action {
             Action::PackPsu
+            | Action::ChooseOutputDestination
             | Action::AddFiles
             | Action::SaveFile
             | Action::CreateMetadataTemplate(MetadataTarget::PsuToml)
@@ -1489,6 +1555,7 @@ impl ActionDispatcher for AppState {
             Action::PackPsu => self.export_psu(),
             Action::AddFiles => self.add_files(),
             Action::SaveFile => self.save_file(),
+            Action::ChooseOutputDestination => self.choose_output_destination(),
             Action::CreateMetadataTemplate(MetadataTarget::PsuToml) => self.create_psu_toml(),
             Action::CreateMetadataTemplate(MetadataTarget::TitleCfg) => self.create_title_cfg(),
             Action::OpenSettings => self.open_settings(),
@@ -1506,6 +1573,7 @@ impl ActionDispatcher for AppState {
             action,
             Action::OpenProject
                 | Action::PackPsu
+                | Action::ChooseOutputDestination
                 | Action::AddFiles
                 | Action::SaveFile
                 | Action::CreateMetadataTemplate(MetadataTarget::PsuToml)

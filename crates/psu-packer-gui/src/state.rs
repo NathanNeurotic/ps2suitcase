@@ -447,6 +447,7 @@ impl PackerApp {
                 config,
                 missing_required_files,
             });
+            self.packer_state.request_pack_confirmation();
         }
     }
 
@@ -534,6 +535,7 @@ impl PackerApp {
             }
         };
 
+        self.packer_state.request_export_folder_dialog();
         let Some(destination_parent) = rfd::FileDialog::new().pick_folder() else {
             return;
         };
@@ -936,6 +938,7 @@ impl ActionDispatcher for PackerApp {
     fn is_action_enabled(&self, action: Action) -> bool {
         match action {
             Action::PackPsu => !self.is_pack_running(),
+            Action::ChooseOutputDestination => !self.is_pack_running(),
             #[cfg(feature = "psu-toml-editor")]
             Action::EditMetadata(MetadataTarget::PsuToml)
             | Action::CreateMetadataTemplate(MetadataTarget::PsuToml) => true,
@@ -972,6 +975,7 @@ impl ActionDispatcher for PackerApp {
                 }
             }
             Action::ChooseOutputDestination => {
+                self.packer_state.request_output_destination_dialog();
                 self.browse_output_destination();
             }
             Action::EditMetadata(MetadataTarget::TitleCfg) => {
@@ -981,6 +985,8 @@ impl ActionDispatcher for PackerApp {
                 self.open_icon_sys_tab();
             }
             Action::CreateMetadataTemplate(MetadataTarget::TitleCfg) => {
+                self.packer_state
+                    .request_metadata_template(MetadataTarget::TitleCfg);
                 self.create_title_cfg_from_template();
             }
             #[cfg(feature = "psu-toml-editor")]
@@ -989,6 +995,8 @@ impl ActionDispatcher for PackerApp {
             }
             #[cfg(feature = "psu-toml-editor")]
             Action::CreateMetadataTemplate(MetadataTarget::PsuToml) => {
+                self.packer_state
+                    .request_metadata_template(MetadataTarget::PsuToml);
                 self.create_psu_toml_from_template();
             }
             Action::OpenEditor(target) => match target {
@@ -1038,6 +1046,7 @@ impl ActionDispatcher for PackerApp {
 
                 match file_action {
                     FileListAction::Browse(kind) => {
+                        self.packer_state.request_file_list_entries(kind);
                         if self.handle_add_file(list_kind(kind)) {
                             self.refresh_psu_toml_editor();
                         }
