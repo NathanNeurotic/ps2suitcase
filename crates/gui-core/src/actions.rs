@@ -35,7 +35,20 @@ pub enum TimestampStrategyAction {
     Manual,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TimestampRulesAction {
+    SetSecondsBetweenItems(u32),
+    SetSlotsPerCategory(u32),
+    MoveCategoryUp(usize),
+    MoveCategoryDown(usize),
+    SetAliasSelected {
+        category_index: usize,
+        alias: String,
+        selected: bool,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TimestampAction {
     SelectStrategy(TimestampStrategyAction),
     RefreshFromStrategy,
@@ -43,6 +56,7 @@ pub enum TimestampAction {
     ApplyPlannedTimestamp,
     ResetRulesToDefault,
     SetManualTimestamp(Option<NaiveDateTime>),
+    Rules(TimestampRulesAction),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -59,7 +73,7 @@ pub enum FileListAction {
     SelectEntry(FileListKind, Option<usize>),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum IconSysAction {
     Enable,
     Disable,
@@ -67,6 +81,7 @@ pub enum IconSysAction {
     GenerateNew,
     ClearPreset,
     ResetFields,
+    ApplyPreset(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

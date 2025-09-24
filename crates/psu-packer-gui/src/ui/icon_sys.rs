@@ -9,6 +9,18 @@ use icon_sys_ui::{
     PresetPreviewData, PresetSectionState, PresetSelection, TitleSectionIds, TitleSectionState,
 };
 
+fn dispatch_icon_sys_action(app: &mut PackerApp, action: IconSysAction) -> bool {
+    let wrapped = Action::IconSys(action);
+    if !app.supports_action(wrapped.clone()) {
+        return false;
+    }
+    if !app.is_action_enabled(wrapped.clone()) {
+        return false;
+    }
+    app.trigger_action(wrapped);
+    true
+}
+
 pub(crate) fn icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
     ui.heading(theme::display_heading_text(ui, "icon.sys metadata"));
     ui.small("Configure the save icon title, flags, and lighting.");
@@ -24,12 +36,13 @@ pub(crate) fn icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
 
     if checkbox_changed {
         let action = if icon_sys_enabled {
-            Action::IconSys(IconSysAction::Enable)
+            IconSysAction::Enable
         } else {
-            Action::IconSys(IconSysAction::Disable)
+            IconSysAction::Disable
         };
-        app.trigger_action(action);
-        config_changed = true;
+        if dispatch_icon_sys_action(app, action) {
+            config_changed = true;
+        }
     }
 
     if app.icon_sys_enabled {
@@ -44,11 +57,13 @@ pub(crate) fn icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
                     ui.selectable_value(&mut generate_new, false, "Generate new icon.sys");
 
                 if use_existing_response.changed() && use_existing {
-                    app.trigger_action(Action::IconSys(IconSysAction::UseExisting));
-                    config_changed = true;
+                    if dispatch_icon_sys_action(app, IconSysAction::UseExisting) {
+                        config_changed = true;
+                    }
                 } else if generate_new_response.changed() && !generate_new {
-                    app.trigger_action(Action::IconSys(IconSysAction::GenerateNew));
-                    config_changed = true;
+                    if dispatch_icon_sys_action(app, IconSysAction::GenerateNew) {
+                        config_changed = true;
+                    }
                 }
             });
 
@@ -107,7 +122,6 @@ pub(crate) fn icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
         ui.add_space(12.0);
 
         let mut selected_preset = app.icon_sys_state.selected_preset.clone();
-        let mut pending_selected: Option<Option<String>> = None;
         {
             let preset_preview = PresetPreviewData {
                 background_colors: &app.icon_sys_state.background_colors,
@@ -130,14 +144,17 @@ pub(crate) fn icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
             if let Some(selection) = &preset_response.selection {
                 match selection {
                     PresetSelection::Manual => {
-                        app.icon_sys_state.clear_preset();
-                        pending_selected = Some(None);
-                        inner_changed = true;
+                        if dispatch_icon_sys_action(app, IconSysAction::ClearPreset) {
+                            inner_changed = true;
+                        }
                     }
                     PresetSelection::Preset(preset) => {
-                        app.icon_sys_state.apply_preset(preset);
-                        pending_selected = Some(app.icon_sys_state.selected_preset.clone());
-                        inner_changed = true;
+                        if dispatch_icon_sys_action(
+                            app,
+                            IconSysAction::ApplyPreset(preset.id.to_string()),
+                        ) {
+                            inner_changed = true;
+                        }
                     }
                 }
             }
@@ -145,11 +162,6 @@ pub(crate) fn icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
                 inner_changed = true;
             }
         }
-        if let Some(value) = pending_selected {
-            selected_preset = value;
-        }
-        app.icon_sys_state.selected_preset = selected_preset;
-
         ui.add_space(12.0);
 
         let background_response = ui.group(|ui| {
@@ -164,7 +176,7 @@ pub(crate) fn icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
             )
         });
         if background_response.inner.changed {
-            app.trigger_action(Action::IconSys(IconSysAction::ClearPreset));
+            dispatch_icon_sys_action(app, IconSysAction::ClearPreset);
             inner_changed = true;
         }
 
@@ -183,7 +195,7 @@ pub(crate) fn icon_sys_editor(app: &mut PackerApp, ui: &mut egui::Ui) {
             )
         });
         if lighting_response.inner.changed {
-            app.trigger_action(Action::IconSys(IconSysAction::ClearPreset));
+            dispatch_icon_sys_action(app, IconSysAction::ClearPreset);
             inner_changed = true;
         }
 

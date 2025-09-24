@@ -12,7 +12,8 @@ use gui_core::state::{SasPrefix, REQUIRED_PROJECT_FILES, TIMESTAMP_RULES_FILE};
 use gui_core::{
     actions::{
         Action, ActionDispatcher, EditorAction, FileListAction, FileListKind, IconSysAction,
-        MetadataAction, MetadataTarget, TimestampAction, TimestampStrategyAction,
+        MetadataAction, MetadataTarget, TimestampAction, TimestampRulesAction,
+        TimestampStrategyAction,
     },
     state::{
         MissingRequiredFile, PackErrorMessage, PackOutcome, PackPreparation, PackerState,
@@ -22,7 +23,7 @@ use gui_core::{
 use icon_sys_ui::IconSysState;
 use indexmap::IndexMap;
 use ps2_filetypes::{sjis, templates, IconSys, TitleCfg};
-use psu_packer::split_icon_sys_title;
+use psu_packer::{split_icon_sys_title, ICON_SYS_PRESETS};
 #[cfg(any(test, feature = "psu-toml-editor"))]
 #[cfg(feature = "psu-toml-editor")]
 use tempfile::tempdir;
@@ -1318,15 +1319,18 @@ impl ActionDispatcher for PackerApp {
                 FileListKind::Exclude => self.packer_state.selected_exclude.is_some(),
             },
             Action::FileList(FileListAction::SelectEntry(_, _)) => true,
-            Action::IconSys(IconSysAction::UseExisting) => {
-                self.icon_sys_enabled && self.icon_sys_existing.is_some()
-            }
-            Action::IconSys(IconSysAction::GenerateNew)
-            | Action::IconSys(IconSysAction::Disable) => self.icon_sys_enabled,
-            Action::IconSys(IconSysAction::ClearPreset)
-            | Action::IconSys(IconSysAction::ResetFields) => {
-                self.icon_sys_enabled && !self.icon_sys_use_existing
-            }
+            Action::IconSys(icon_action) => match icon_action {
+                IconSysAction::UseExisting => {
+                    self.icon_sys_enabled && self.icon_sys_existing.is_some()
+                }
+                IconSysAction::GenerateNew | IconSysAction::Disable => self.icon_sys_enabled,
+                IconSysAction::ClearPreset
+                | IconSysAction::ResetFields
+                | IconSysAction::ApplyPreset(_) => {
+                    self.icon_sys_enabled && !self.icon_sys_use_existing
+                }
+                IconSysAction::Enable => true,
+            },
             Action::Timestamp(TimestampAction::SetManualTimestamp(_)) => true,
             _ => true,
         }
@@ -1453,6 +1457,53 @@ impl ActionDispatcher for PackerApp {
                         self.refresh_psu_toml_editor();
                     }
                 }
+                TimestampAction::Rules(rules_action) => match rules_action {
+                    TimestampRulesAction::SetSecondsBetweenItems(seconds) => {
+                        if self
+                            .packer_state
+                            .timestamp_rules_ui
+                            .set_seconds_between_items(seconds)
+                        {
+                            self.mark_timestamp_rules_modified();
+                        }
+                    }
+                    TimestampRulesAction::SetSlotsPerCategory(slots) => {
+                        if self
+                            .packer_state
+                            .timestamp_rules_ui
+                            .set_slots_per_category(slots)
+                        {
+                            self.mark_timestamp_rules_modified();
+                        }
+                    }
+                    TimestampRulesAction::MoveCategoryUp(index) => {
+                        if self.packer_state.timestamp_rules_ui.move_category_up(index) {
+                            self.mark_timestamp_rules_modified();
+                        }
+                    }
+                    TimestampRulesAction::MoveCategoryDown(index) => {
+                        if self
+                            .packer_state
+                            .timestamp_rules_ui
+                            .move_category_down(index)
+                        {
+                            self.mark_timestamp_rules_modified();
+                        }
+                    }
+                    TimestampRulesAction::SetAliasSelected {
+                        category_index,
+                        alias,
+                        selected,
+                    } => {
+                        if self.packer_state.timestamp_rules_ui.set_alias_selected(
+                            category_index,
+                            &alias,
+                            selected,
+                        ) {
+                            self.mark_timestamp_rules_modified();
+                        }
+                    }
+                },
             },
             Action::FileList(file_action) => match file_action {
                 FileListAction::Browse(kind) => {
@@ -1531,6 +1582,17 @@ impl ActionDispatcher for PackerApp {
                 IconSysAction::ResetFields => {
                     self.reset_icon_sys_fields();
                     self.refresh_psu_toml_editor();
+                }
+                IconSysAction::ApplyPreset(preset_id) => {
+                    if self.icon_sys_enabled && !self.icon_sys_use_existing {
+                        if let Some(preset) = ICON_SYS_PRESETS
+                            .iter()
+                            .find(|preset| preset.id == preset_id)
+                        {
+                            self.icon_sys_state.apply_preset(preset);
+                            self.refresh_psu_toml_editor();
+                        }
+                    }
                 }
             },
             _ => {}
