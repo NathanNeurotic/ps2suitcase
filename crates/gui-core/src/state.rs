@@ -10,7 +10,7 @@ use std::{
 
 use crate::actions::{
     Action, ActionDispatcher, FileListAction, FileListKind, IconSysAction, MetadataAction,
-    MetadataTarget, TimestampAction, TimestampStrategyAction,
+    MetadataTarget, TimestampAction, TimestampRulesAction, TimestampStrategyAction,
 };
 use crate::commands::AppEvent;
 use crate::validation::{sanitize_seconds_between_items, timestamp_rules_equal};
@@ -1729,7 +1729,8 @@ impl ActionDispatcher for AppState {
                 self.icon_sys_enabled && self.opened_folder.is_some()
             }
             Action::IconSys(IconSysAction::ClearPreset)
-            | Action::IconSys(IconSysAction::ResetFields) => {
+            | Action::IconSys(IconSysAction::ResetFields)
+            | Action::IconSys(IconSysAction::ApplyPreset(_)) => {
                 self.icon_sys_enabled && !self.icon_sys_use_existing && self.opened_folder.is_some()
             }
             Action::PackPsu
@@ -1800,6 +1801,45 @@ impl ActionDispatcher for AppState {
                 TimestampAction::SetManualTimestamp(timestamp) => {
                     self.packer.set_manual_timestamp(timestamp);
                 }
+                TimestampAction::Rules(rules_action) => match rules_action {
+                    TimestampRulesAction::SetSecondsBetweenItems(seconds) => {
+                        if self
+                            .packer
+                            .timestamp_rules_ui
+                            .set_seconds_between_items(seconds)
+                        {
+                            self.packer.mark_timestamp_rules_modified();
+                        }
+                    }
+                    TimestampRulesAction::SetSlotsPerCategory(slots) => {
+                        if self.packer.timestamp_rules_ui.set_slots_per_category(slots) {
+                            self.packer.mark_timestamp_rules_modified();
+                        }
+                    }
+                    TimestampRulesAction::MoveCategoryUp(index) => {
+                        if self.packer.timestamp_rules_ui.move_category_up(index) {
+                            self.packer.mark_timestamp_rules_modified();
+                        }
+                    }
+                    TimestampRulesAction::MoveCategoryDown(index) => {
+                        if self.packer.timestamp_rules_ui.move_category_down(index) {
+                            self.packer.mark_timestamp_rules_modified();
+                        }
+                    }
+                    TimestampRulesAction::SetAliasSelected {
+                        category_index,
+                        alias,
+                        selected,
+                    } => {
+                        if self.packer.timestamp_rules_ui.set_alias_selected(
+                            category_index,
+                            &alias,
+                            selected,
+                        ) {
+                            self.packer.mark_timestamp_rules_modified();
+                        }
+                    }
+                },
             },
             Action::FileList(file_action) => match file_action {
                 FileListAction::Browse(kind) => {
@@ -1852,6 +1892,11 @@ impl ActionDispatcher for AppState {
                 }
                 IconSysAction::ResetFields => {
                     self.reset_icon_sys_fields();
+                }
+                IconSysAction::ApplyPreset(preset_id) => {
+                    if self.icon_sys_enabled && !self.icon_sys_use_existing {
+                        self.icon_sys_preset = Some(preset_id);
+                    }
                 }
             },
             Action::OpenEditor(_) => {}
