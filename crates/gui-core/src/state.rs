@@ -1473,7 +1473,12 @@ impl ActionDispatcher for AppState {
             | Action::SaveFile
             | Action::CreateMetadataTemplate(MetadataTarget::PsuToml)
             | Action::CreateMetadataTemplate(MetadataTarget::TitleCfg)
-            | Action::EditMetadata(_) => self.opened_folder.is_some(),
+            | Action::EditMetadata(_)
+            | Action::OpenEditor(_)
+            | Action::Metadata(_)
+            | Action::Timestamp(_)
+            | Action::FileList(_)
+            | Action::IconSys(_) => self.opened_folder.is_some(),
             _ => true,
         }
     }
@@ -1487,6 +1492,11 @@ impl ActionDispatcher for AppState {
             Action::CreateMetadataTemplate(MetadataTarget::PsuToml) => self.create_psu_toml(),
             Action::CreateMetadataTemplate(MetadataTarget::TitleCfg) => self.create_title_cfg(),
             Action::OpenSettings => self.open_settings(),
+            Action::OpenEditor(_)
+            | Action::Metadata(_)
+            | Action::Timestamp(_)
+            | Action::FileList(_)
+            | Action::IconSys(_) => {}
             _ => {}
         }
     }
@@ -1501,6 +1511,11 @@ impl ActionDispatcher for AppState {
                 | Action::CreateMetadataTemplate(MetadataTarget::PsuToml)
                 | Action::CreateMetadataTemplate(MetadataTarget::TitleCfg)
                 | Action::OpenSettings
+                | Action::OpenEditor(_)
+                | Action::Metadata(_)
+                | Action::Timestamp(_)
+                | Action::FileList(_)
+                | Action::IconSys(_)
         )
     }
 }
