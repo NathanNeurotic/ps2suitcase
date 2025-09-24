@@ -1043,6 +1043,159 @@ impl PackerState {
         }
     }
 
+    pub fn set_selected_prefix(&mut self, prefix: SasPrefix) -> bool {
+        if self.selected_prefix == prefix {
+            return false;
+        }
+
+        let previous_default = self.default_output_file_name();
+        self.selected_prefix = prefix;
+        self.metadata_inputs_changed(previous_default);
+        true
+    }
+
+    pub fn set_folder_base_name<S>(&mut self, base_name: S) -> bool
+    where
+        S: Into<String>,
+    {
+        let base_name = base_name.into();
+        if self.folder_base_name == base_name {
+            return false;
+        }
+
+        let previous_default = self.default_output_file_name();
+        self.folder_base_name = base_name;
+        self.metadata_inputs_changed(previous_default);
+        true
+    }
+
+    pub fn set_psu_file_base_name<S>(&mut self, base_name: S) -> bool
+    where
+        S: Into<String>,
+    {
+        let base_name = base_name.into();
+        if self.psu_file_base_name == base_name {
+            return false;
+        }
+
+        let previous_default = self.default_output_file_name();
+        self.psu_file_base_name = base_name;
+        self.metadata_inputs_changed(previous_default);
+        true
+    }
+
+    pub fn set_manual_timestamp(&mut self, timestamp: Option<NaiveDateTime>) -> bool {
+        if self.manual_timestamp == timestamp {
+            return false;
+        }
+
+        self.manual_timestamp = timestamp;
+        if matches!(self.timestamp_strategy, TimestampStrategy::Manual) {
+            self.refresh_timestamp_from_strategy();
+        }
+        true
+    }
+
+    pub fn ensure_manual_timestamp(&mut self, default: NaiveDateTime) -> bool {
+        if self.manual_timestamp.is_some() {
+            return false;
+        }
+
+        self.set_manual_timestamp(Some(default))
+    }
+
+    pub fn file_list_parts_mut(
+        &mut self,
+        kind: FileListKind,
+    ) -> (&mut Vec<String>, &mut Option<usize>, &mut String) {
+        match kind {
+            FileListKind::Include => (
+                &mut self.include_files,
+                &mut self.selected_include,
+                &mut self.include_manual_entry,
+            ),
+            FileListKind::Exclude => (
+                &mut self.exclude_files,
+                &mut self.selected_exclude,
+                &mut self.exclude_manual_entry,
+            ),
+        }
+    }
+
+    pub fn file_list_entries(&self, kind: FileListKind) -> &[String] {
+        match kind {
+            FileListKind::Include => &self.include_files,
+            FileListKind::Exclude => &self.exclude_files,
+        }
+    }
+
+    pub fn file_list_selection(&self, kind: FileListKind) -> Option<usize> {
+        match kind {
+            FileListKind::Include => self.selected_include,
+            FileListKind::Exclude => self.selected_exclude,
+        }
+    }
+
+    pub fn select_file_list_entry(&mut self, kind: FileListKind, selection: Option<usize>) {
+        let (files, selected, _) = self.file_list_parts_mut(kind);
+        if let Some(index) = selection {
+            if index < files.len() {
+                *selected = Some(index);
+            } else if files.is_empty() {
+                *selected = None;
+            } else {
+                *selected = Some(files.len() - 1);
+            }
+        } else {
+            *selected = None;
+        }
+    }
+
+    pub fn set_file_list_entries(&mut self, kind: FileListKind, entries: Vec<String>) {
+        let (files, selected, _) = self.file_list_parts_mut(kind);
+        *files = entries;
+        *selected = None;
+    }
+
+    pub fn add_file_list_entry(&mut self, kind: FileListKind, entry: String) -> usize {
+        let (files, selected, _) = self.file_list_parts_mut(kind);
+        files.push(entry);
+        let index = files.len() - 1;
+        *selected = Some(index);
+        index
+    }
+
+    pub fn remove_file_list_entry(&mut self, kind: FileListKind, index: usize) -> Option<String> {
+        let (files, selected, _) = self.file_list_parts_mut(kind);
+        if index >= files.len() {
+            return None;
+        }
+
+        let removed = files.remove(index);
+        if files.is_empty() {
+            *selected = None;
+        } else if index >= files.len() {
+            *selected = Some(files.len() - 1);
+        } else {
+            *selected = Some(index);
+        }
+        Some(removed)
+    }
+
+    pub fn clear_file_list_selection(&mut self, kind: FileListKind) {
+        let (_, selected, _) = self.file_list_parts_mut(kind);
+        *selected = None;
+    }
+
+    pub fn manual_entry_mut(&mut self, kind: FileListKind) -> &mut String {
+        let (_, _, manual) = self.file_list_parts_mut(kind);
+        manual
+    }
+
+    pub fn clear_manual_entry(&mut self, kind: FileListKind) {
+        self.manual_entry_mut(kind).clear();
+    }
+
     fn ensure_timestamp_strategy_default(&mut self) {
         if !matches!(self.timestamp_strategy, TimestampStrategy::None) {
             return;

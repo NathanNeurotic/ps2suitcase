@@ -134,11 +134,13 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
                 ui.label("• Use when you must pin the archive to an explicit, reviewer-approved timestamp.");
                 ui.label("• Relies on: Manual date and time you enter here.");
 
-                if strategy == TimestampStrategy::Manual
-                    && app.packer_state.manual_timestamp.is_none()
-                {
-                    app.packer_state.manual_timestamp = Some(default_timestamp);
-                    app.refresh_timestamp_from_strategy();
+                if strategy == TimestampStrategy::Manual {
+                    if app
+                        .packer_state
+                        .ensure_manual_timestamp(default_timestamp)
+                    {
+                        manual_timestamp_changed = true;
+                    }
                 }
 
                 if strategy == TimestampStrategy::Manual {
@@ -185,12 +187,20 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
                     if changed {
                         if let Some(new_time) = NaiveTime::from_hms_opt(hour, minute, second) {
                             timestamp = NaiveDateTime::new(date, new_time);
-                            app.packer_state.manual_timestamp = Some(timestamp);
-                            manual_timestamp_changed = true;
+                            if app
+                                .packer_state
+                                .set_manual_timestamp(Some(timestamp))
+                            {
+                                manual_timestamp_changed = true;
+                            }
                         }
                     } else if app.packer_state.manual_timestamp != Some(timestamp) {
-                        app.packer_state.manual_timestamp = Some(timestamp);
-                        manual_timestamp_changed = true;
+                        if app
+                            .packer_state
+                            .set_manual_timestamp(Some(timestamp))
+                        {
+                            manual_timestamp_changed = true;
+                        }
                     }
 
                     if let Some(ts) = app.packer_state.manual_timestamp {
@@ -199,8 +209,12 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
 
                     if let Some(planned) = planned_timestamp {
                         if ui.button("Copy planned timestamp").clicked() {
-                            app.packer_state.manual_timestamp = Some(planned);
-                            manual_timestamp_changed = true;
+                            if app
+                                .packer_state
+                                .set_manual_timestamp(Some(planned))
+                            {
+                                manual_timestamp_changed = true;
+                            }
                         }
                     }
                 }
@@ -212,7 +226,7 @@ pub(crate) fn metadata_timestamp_section(app: &mut PackerApp, ui: &mut egui::Ui)
         }
 
         if manual_timestamp_changed {
-            app.refresh_timestamp_from_strategy();
+            app.refresh_psu_toml_editor();
         }
 
         ui.add_space(8.0);
@@ -534,7 +548,7 @@ mod tests {
             .and_hms_opt(3, 4, 5)
             .unwrap();
         app.packer_state.source_timestamp = Some(source);
-        app.packer_state.timestamp_strategy = TimestampStrategy::InheritSource;
+        app.set_timestamp_strategy(TimestampStrategy::InheritSource);
         app.refresh_timestamp_from_strategy();
 
         let rendered = render_metadata_text(&mut app);
@@ -551,9 +565,9 @@ mod tests {
     fn summary_references_planned_when_using_sas_rules() {
         let mut app = PackerApp::default();
         app.packer_state.source_timestamp = None;
-        app.packer_state.selected_prefix = SasPrefix::App;
-        app.packer_state.folder_base_name = "TEST".to_string();
-        app.packer_state.timestamp_strategy = TimestampStrategy::SasRules;
+        app.packer_state.set_selected_prefix(SasPrefix::App);
+        app.packer_state.set_folder_base_name("TEST".to_string());
+        app.set_timestamp_strategy(TimestampStrategy::SasRules);
         app.refresh_timestamp_from_strategy();
 
         let rendered = render_metadata_text(&mut app);
@@ -568,13 +582,12 @@ mod tests {
     fn manual_summary_updates_after_manual_timestamp_change() {
         let mut app = PackerApp::default();
         app.packer_state.source_timestamp = None;
-        app.packer_state.timestamp_strategy = TimestampStrategy::Manual;
+        app.set_timestamp_strategy(TimestampStrategy::Manual);
         let initial = NaiveDate::from_ymd_opt(2024, 5, 6)
             .unwrap()
             .and_hms_opt(7, 8, 9)
             .unwrap();
-        app.packer_state.manual_timestamp = Some(initial);
-        app.refresh_timestamp_from_strategy();
+        let _ = app.packer_state.set_manual_timestamp(Some(initial));
 
         let rendered = render_metadata_text(&mut app);
         assert!(rendered.contains(
@@ -582,8 +595,7 @@ mod tests {
         ));
 
         let updated = initial + Duration::minutes(5);
-        app.packer_state.manual_timestamp = Some(updated);
-        app.refresh_timestamp_from_strategy();
+        app.packer_state.set_manual_timestamp(Some(updated));
 
         let rerendered = render_metadata_text(&mut app);
         assert!(rerendered.contains(
