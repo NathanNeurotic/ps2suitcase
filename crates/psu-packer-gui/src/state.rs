@@ -581,7 +581,9 @@ impl PackerApp {
                 self.set_error_message("Please provide a PSU filename");
                 return None;
             }
-            self.packer_state.psu_file_base_name = trimmed_folder.to_string();
+            let _ = self
+                .packer_state
+                .set_psu_file_base_name(trimmed_folder.to_string());
         }
 
         if !self.ensure_output_destination_selected() {
@@ -690,22 +692,22 @@ impl PackerApp {
         } = config;
 
         self.set_folder_name_from_full(&name);
-        self.packer_state.psu_file_base_name = self.packer_state.folder_base_name.clone();
+        let folder_base = self.packer_state.folder_base_name.clone();
+        self.packer_state.set_psu_file_base_name(folder_base);
         self.packer_state.source_timestamp = timestamp;
-        self.packer_state.manual_timestamp = timestamp;
-        self.packer_state.timestamp = timestamp;
-        self.packer_state.timestamp_strategy = if timestamp.is_some() {
-            TimestampStrategy::Manual
-        } else {
-            TimestampStrategy::None
-        };
-        self.packer_state.timestamp_from_rules = false;
+        let _ = self.packer_state.set_manual_timestamp(timestamp);
+        self.packer_state
+            .set_timestamp_strategy(if timestamp.is_some() {
+                TimestampStrategy::Manual
+            } else {
+                TimestampStrategy::None
+            });
         self.metadata_inputs_changed(previous_default_output);
 
-        self.packer_state.include_files = include.unwrap_or_default();
-        self.packer_state.exclude_files = exclude.unwrap_or_default();
-        self.packer_state.selected_include = None;
-        self.packer_state.selected_exclude = None;
+        self.packer_state
+            .set_file_list_entries(FileListKind::Include, include.unwrap_or_default());
+        self.packer_state
+            .set_file_list_entries(FileListKind::Exclude, exclude.unwrap_or_default());
 
         let existing_icon_sys = self.icon_sys_existing.clone();
 
@@ -1189,8 +1191,8 @@ mod packer_app_tests {
 
         let mut app = PackerApp::default();
         app.packer_state.folder = Some(project_dir.clone());
-        app.packer_state.folder_base_name = "SAVE".to_string();
-        app.packer_state.psu_file_base_name.clear();
+        app.packer_state.set_folder_base_name("SAVE".to_string());
+        app.packer_state.set_psu_file_base_name(String::new());
 
         let previous_default = app.packer_state.default_output_file_name();
         app.metadata_inputs_changed(previous_default);
@@ -1220,9 +1222,9 @@ mod packer_app_tests {
 
         let mut app = PackerApp::default();
         app.packer_state.folder = Some(project_dir.clone());
-        app.packer_state.folder_base_name = "SAVE".to_string();
-        app.packer_state.psu_file_base_name.clear();
-        app.packer_state.selected_prefix = SasPrefix::App;
+        app.packer_state.set_folder_base_name("SAVE".to_string());
+        app.packer_state.set_psu_file_base_name(String::new());
+        app.packer_state.set_selected_prefix(SasPrefix::App);
         app.packer_state.output.clear();
 
         let result = app.prepare_pack_inputs();
@@ -1238,9 +1240,9 @@ mod packer_app_tests {
 
         let mut app = PackerApp::default();
         app.packer_state.folder = Some(project_dir);
-        app.packer_state.folder_base_name = "SAVE".to_string();
-        app.packer_state.psu_file_base_name = "SAVE".to_string();
-        app.packer_state.selected_prefix = SasPrefix::App;
+        app.packer_state.set_folder_base_name("SAVE".to_string());
+        app.packer_state.set_psu_file_base_name("SAVE".to_string());
+        app.packer_state.set_selected_prefix(SasPrefix::App);
         app.packer_state.output = workspace.path().join("output.psu").display().to_string();
 
         app.handle_pack_request();
@@ -1275,9 +1277,9 @@ mod packer_app_tests {
 
         let mut app = PackerApp::default();
         app.packer_state.folder = Some(project_dir);
-        app.packer_state.folder_base_name = "SAVE".to_string();
-        app.packer_state.psu_file_base_name = "SAVE".to_string();
-        app.packer_state.selected_prefix = SasPrefix::App;
+        app.packer_state.set_folder_base_name("SAVE".to_string());
+        app.packer_state.set_psu_file_base_name("SAVE".to_string());
+        app.packer_state.set_selected_prefix(SasPrefix::App);
         app.packer_state.output = workspace.path().join("output.psu").display().to_string();
 
         app.handle_pack_request();
@@ -1314,9 +1316,9 @@ mod packer_app_tests {
 
         let mut app = PackerApp::default();
         app.packer_state.folder = Some(project_dir);
-        app.packer_state.folder_base_name = "SAVE".to_string();
-        app.packer_state.psu_file_base_name = "SAVE".to_string();
-        app.packer_state.selected_prefix = SasPrefix::App;
+        app.packer_state.set_folder_base_name("SAVE".to_string());
+        app.packer_state.set_psu_file_base_name("SAVE".to_string());
+        app.packer_state.set_selected_prefix(SasPrefix::App);
         app.packer_state.output = existing_output.display().to_string();
         app.packer_state.loaded_psu_path = Some(existing_output.clone());
 
@@ -1348,9 +1350,9 @@ mod packer_app_tests {
 
         let mut app = PackerApp::default();
         app.packer_state.folder = Some(project_dir);
-        app.packer_state.folder_base_name = "SAVE".to_string();
-        app.packer_state.psu_file_base_name = "SAVE".to_string();
-        app.packer_state.selected_prefix = SasPrefix::App;
+        app.packer_state.set_folder_base_name("SAVE".to_string());
+        app.packer_state.set_psu_file_base_name("SAVE".to_string());
+        app.packer_state.set_selected_prefix(SasPrefix::App);
         app.packer_state.output = missing_output.display().to_string();
         app.packer_state.loaded_psu_path = Some(missing_output.clone());
 
@@ -1384,9 +1386,9 @@ mod packer_app_tests {
 
         let mut app = PackerApp::default();
         app.packer_state.folder = None;
-        app.packer_state.folder_base_name = "SAVE".to_string();
-        app.packer_state.psu_file_base_name = "SAVE".to_string();
-        app.packer_state.selected_prefix = SasPrefix::App;
+        app.packer_state.set_folder_base_name("SAVE".to_string());
+        app.packer_state.set_psu_file_base_name("SAVE".to_string());
+        app.packer_state.set_selected_prefix(SasPrefix::App);
         app.packer_state.output = existing_output.display().to_string();
         app.packer_state.loaded_psu_path = Some(existing_output.clone());
 
@@ -2305,7 +2307,8 @@ linebreak_pos = 5
         }
 
         // Optional files should only be required when their features are enabled.
-        app.packer_state.include_files.push("BOOT.ELF".to_string());
+        app.packer_state
+            .add_file_list_entry(FileListKind::Include, "BOOT.ELF".to_string());
         app.packer_state.refresh_missing_required_project_files();
         assert_eq!(
             app.packer_state.missing_required_project_files,
@@ -2322,7 +2325,7 @@ linebreak_pos = 5
             fs::remove_file(&timestamp_path).expect("remove timestamp rules");
         }
 
-        app.packer_state.timestamp_strategy = TimestampStrategy::SasRules;
+        app.set_timestamp_strategy(TimestampStrategy::SasRules);
         app.packer_state.refresh_missing_required_project_files();
         assert!(app.packer_state.missing_required_project_files.is_empty());
 
@@ -2361,8 +2364,9 @@ linebreak_pos = 5
 
         let mut app = PackerApp::default();
         app.packer_state.folder = Some(temp_dir.path().to_path_buf());
-        app.packer_state.folder_base_name = "Sample".to_string();
-        app.packer_state.psu_file_base_name = "Sample".to_string();
+        app.packer_state.set_folder_base_name("Sample".to_string());
+        app.packer_state
+            .set_psu_file_base_name("Sample".to_string());
         app.packer_state.output = temp_dir.path().join("Sample.psu").display().to_string();
 
         for file in REQUIRED_PROJECT_FILES {
@@ -2390,7 +2394,8 @@ linebreak_pos = 5
         if boot_path.exists() {
             fs::remove_file(&boot_path).expect("remove BOOT.ELF");
         }
-        app.packer_state.include_files.push("BOOT.ELF".to_string());
+        app.packer_state
+            .add_file_list_entry(FileListKind::Include, "BOOT.ELF".to_string());
         app.handle_pack_request();
         let error = app
             .packer_state
@@ -2412,7 +2417,7 @@ linebreak_pos = 5
         if timestamp_path.exists() {
             fs::remove_file(&timestamp_path).expect("remove timestamp rules");
         }
-        app.packer_state.timestamp_strategy = TimestampStrategy::SasRules;
+        app.set_timestamp_strategy(TimestampStrategy::SasRules);
         let result = app.prepare_pack_inputs();
         assert!(
             result.is_some(),

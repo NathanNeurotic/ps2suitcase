@@ -9,8 +9,9 @@ use ps2_filetypes::{IconSys, PSUEntryKind, PSU};
 
 use crate::{
     ui::{project_requirements_checklist, theme},
-    PackerApp, SasPrefix, TimestampStrategy, REQUIRED_PROJECT_FILES,
+    PackerApp, TimestampStrategy, REQUIRED_PROJECT_FILES,
 };
+use gui_core::actions::FileListKind;
 
 pub(crate) fn file_menu(app: &mut PackerApp, ui: &mut egui::Ui) {
     ui.menu_button("File", |ui| {
@@ -254,17 +255,25 @@ pub(crate) fn load_project_files(app: &mut PackerApp, folder: &Path) {
             } = config;
 
             app.set_folder_name_from_full(&name);
-            app.packer_state.psu_file_base_name = app.packer_state.folder_base_name.clone();
+            let folder_base = app.packer_state.folder_base_name.clone();
+            let _ = app.packer_state.set_psu_file_base_name(folder_base);
             if let Some(default_path) = app.packer_state.default_output_path_with(Some(folder)) {
                 app.packer_state.output = default_path.display().to_string();
             } else {
                 app.packer_state.output.clear();
             }
             app.packer_state.source_timestamp = timestamp;
-            app.packer_state.include_files = include.unwrap_or_default();
-            app.packer_state.exclude_files = exclude.unwrap_or_default();
-            app.packer_state.selected_include = None;
-            app.packer_state.selected_exclude = None;
+            let _ = app.packer_state.set_manual_timestamp(timestamp);
+            app.packer_state
+                .set_timestamp_strategy(if timestamp.is_some() {
+                    TimestampStrategy::Manual
+                } else {
+                    TimestampStrategy::None
+                });
+            app.packer_state
+                .set_file_list_entries(FileListKind::Include, include.unwrap_or_default());
+            app.packer_state
+                .set_file_list_entries(FileListKind::Exclude, exclude.unwrap_or_default());
             app.clear_error_message();
             app.packer_state.status.clear();
 
@@ -304,18 +313,7 @@ pub(crate) fn load_project_files(app: &mut PackerApp, folder: &Path) {
             let message = format_load_error(folder, err);
             app.set_error_message(message);
             app.packer_state.output.clear();
-            app.packer_state.selected_prefix = SasPrefix::default();
-            app.packer_state.folder_base_name.clear();
-            app.packer_state.psu_file_base_name.clear();
-            app.packer_state.timestamp = None;
-            app.packer_state.timestamp_strategy = TimestampStrategy::None;
-            app.packer_state.timestamp_from_rules = false;
-            app.packer_state.source_timestamp = None;
-            app.packer_state.manual_timestamp = None;
-            app.packer_state.include_files.clear();
-            app.packer_state.exclude_files.clear();
-            app.packer_state.selected_include = None;
-            app.packer_state.selected_exclude = None;
+            app.packer_state.reset_metadata_fields();
             app.reset_icon_sys_fields();
         }
     }

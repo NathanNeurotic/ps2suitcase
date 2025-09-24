@@ -6,6 +6,7 @@ use crate::{
     ui::{project_requirements_checklist, theme},
     PackerApp, SasPrefix, ICON_SYS_TITLE_CHAR_LIMIT, REQUIRED_PROJECT_FILES,
 };
+use gui_core::{actions::FileListKind, TimestampStrategy};
 use ps2_filetypes::sjis;
 
 pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
@@ -13,7 +14,6 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
     ui.group(|ui| {
         ui.heading(theme::display_heading_text(ui, "Metadata"));
         ui.small("Edit PSU metadata before or after selecting a folder.");
-        let previous_default_output = app.packer_state.default_output_file_name();
         let mut metadata_changed = false;
 
         egui::Grid::new("metadata_grid")
@@ -21,16 +21,14 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
             .spacing(egui::vec2(12.0, 6.0))
             .show(ui, |ui| {
                 ui.label("PREFIX CATEGORY");
+                let mut selected_prefix = app.packer_state.selected_prefix;
                 let prefix_changed = egui::ComboBox::from_id_source("metadata_prefix_combo")
-                    .selected_text(app.packer_state.selected_prefix.label())
+                    .selected_text(selected_prefix.label())
                     .show_ui(ui, |ui| {
                         let mut changed = false;
                         for prefix in SasPrefix::iter_with_unprefixed() {
-                            let response = ui.selectable_value(
-                                &mut app.packer_state.selected_prefix,
-                                prefix,
-                                prefix.label(),
-                            );
+                            let response =
+                                ui.selectable_value(&mut selected_prefix, prefix, prefix.label());
                             if response.changed() {
                                 changed = true;
                             }
@@ -39,8 +37,10 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
                     })
                     .inner
                     .unwrap_or(false);
-                if prefix_changed {
-                    metadata_changed = true;
+                if prefix_changed && selected_prefix != app.packer_state.selected_prefix {
+                    if app.packer_state.set_selected_prefix(selected_prefix) {
+                        metadata_changed = true;
+                    }
                 }
                 ui.end_row();
 
@@ -54,11 +54,11 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
                         ui.small(format!("Creates folder: {folder_preview}"));
                     }
                 });
-                if ui
-                    .text_edit_singleline(&mut app.packer_state.folder_base_name)
-                    .changed()
-                {
-                    metadata_changed = true;
+                let mut folder_base_name = app.packer_state.folder_base_name.clone();
+                if ui.text_edit_singleline(&mut folder_base_name).changed() {
+                    if app.packer_state.set_folder_base_name(folder_base_name) {
+                        metadata_changed = true;
+                    }
                 }
                 ui.end_row();
 
@@ -74,16 +74,18 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
                         }
                     }
                 });
+                let mut psu_base = app.packer_state.psu_file_base_name.clone();
                 let psu_response = ui
                     .horizontal(|ui| {
-                        let response =
-                            ui.text_edit_singleline(&mut app.packer_state.psu_file_base_name);
+                        let response = ui.text_edit_singleline(&mut psu_base);
                         ui.monospace(".psu");
                         response
                     })
                     .inner;
                 if psu_response.changed() {
-                    metadata_changed = true;
+                    if app.packer_state.set_psu_file_base_name(psu_base) {
+                        metadata_changed = true;
+                    }
                 }
                 ui.end_row();
 
@@ -105,7 +107,7 @@ pub(crate) fn metadata_section(app: &mut PackerApp, ui: &mut egui::Ui) {
             });
 
         if metadata_changed {
-            app.metadata_inputs_changed(previous_default_output);
+            app.refresh_psu_toml_editor();
         }
 
         #[cfg(feature = "psu-toml-editor")]
@@ -130,13 +132,15 @@ pub(crate) fn file_filters_section(app: &mut PackerApp, ui: &mut egui::Ui) {
         }
         ui.columns(2, |columns| {
             let include_actions = {
-                let state = app.packer_state_mut();
+                let (files, selected, manual_entry) = app
+                    .packer_state_mut()
+                    .file_list_parts_mut(FileListKind::Include);
                 file_list_ui(
                     &mut columns[0],
                     ListKind::Include.label(),
-                    &mut state.include_files,
-                    &mut state.selected_include,
-                    &mut state.include_manual_entry,
+                    files,
+                    selected,
+                    manual_entry,
                     folder_selected,
                 )
             };
@@ -153,13 +157,15 @@ pub(crate) fn file_filters_section(app: &mut PackerApp, ui: &mut egui::Ui) {
             }
 
             let exclude_actions = {
-                let state = app.packer_state_mut();
+                let (files, selected, manual_entry) = app
+                    .packer_state_mut()
+                    .file_list_parts_mut(FileListKind::Exclude);
                 file_list_ui(
                     &mut columns[1],
                     ListKind::Exclude.label(),
-                    &mut state.exclude_files,
-                    &mut state.selected_exclude,
-                    &mut state.exclude_manual_entry,
+                    files,
+                    selected,
+                    manual_entry,
                     folder_selected,
                 )
             };
@@ -349,6 +355,13 @@ impl ListKind {
             ListKind::Exclude => "Exclude files",
         }
     }
+
+    fn as_file_list_kind(self) -> FileListKind {
+        match self {
+            ListKind::Include => FileListKind::Include,
+            ListKind::Exclude => FileListKind::Exclude,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -361,9 +374,9 @@ mod tests {
     #[test]
     fn config_from_state_appends_psu_toml_once() {
         let mut app = PackerApp::default();
-        app.packer_state.folder_base_name = "SAVE".to_string();
-        app.packer_state.psu_file_base_name = "SAVE".to_string();
-        app.packer_state.selected_prefix = SasPrefix::App;
+        app.packer_state.set_folder_base_name("SAVE".to_string());
+        app.packer_state.set_psu_file_base_name("SAVE".to_string());
+        app.packer_state.set_selected_prefix(SasPrefix::App);
 
         let config = app.config_from_state().expect("configuration should build");
         assert_eq!(config.exclude, Some(vec!["psu.toml".to_string()]));
@@ -372,7 +385,8 @@ mod tests {
             "building the configuration should not modify the exclude list"
         );
 
-        app.packer_state.exclude_files = vec!["DATA.BIN".to_string()];
+        app.packer_state
+            .set_file_list_entries(FileListKind::Exclude, vec!["DATA.BIN".to_string()]);
         let config_with_manual_entry = app
             .config_from_state()
             .expect("configuration should include manual exclude");
@@ -381,7 +395,8 @@ mod tests {
             Some(vec!["DATA.BIN".to_string(), "psu.toml".to_string()])
         );
 
-        app.packer_state.exclude_files = vec!["psu.toml".to_string()];
+        app.packer_state
+            .set_file_list_entries(FileListKind::Exclude, vec!["psu.toml".to_string()]);
         let config_with_duplicate = app
             .config_from_state()
             .expect("configuration should handle duplicate entries");
@@ -395,14 +410,18 @@ mod tests {
     fn build_config_uses_loaded_psu_edits() {
         let mut app = PackerApp::default();
         app.packer_state.loaded_psu_path = Some(PathBuf::from("input.psu"));
-        app.packer_state.selected_prefix = SasPrefix::Emu;
-        app.packer_state.folder_base_name = "SAVE".to_string();
+        app.packer_state.set_selected_prefix(SasPrefix::Emu);
+        app.packer_state.set_folder_base_name("SAVE".to_string());
+        app.packer_state.set_psu_file_base_name("SAVE".to_string());
         let timestamp = NaiveDate::from_ymd_opt(2023, 11, 14)
             .and_then(|date| date.and_hms_opt(12, 34, 56))
             .expect("valid timestamp");
-        app.packer_state.timestamp = Some(timestamp);
-        app.packer_state.include_files.push("FILE.BIN".to_string());
-        app.packer_state.exclude_files.push("SKIP.DAT".to_string());
+        app.packer_state.set_manual_timestamp(Some(timestamp));
+        app.set_timestamp_strategy(TimestampStrategy::Manual);
+        app.packer_state
+            .set_file_list_entries(FileListKind::Include, vec!["FILE.BIN".to_string()]);
+        app.packer_state
+            .set_file_list_entries(FileListKind::Exclude, vec!["SKIP.DAT".to_string()]);
 
         let config = app.build_config().expect("config builds successfully");
         assert_eq!(config.name, "EMU_SAVE");
@@ -417,8 +436,8 @@ mod tests {
     #[test]
     fn manual_filter_entries_allowed_without_folder() {
         let mut app = PackerApp::default();
-        app.packer_state.selected_prefix = SasPrefix::App;
-        app.packer_state.folder_base_name = "SAVE".to_string();
+        app.packer_state.set_selected_prefix(SasPrefix::App);
+        app.packer_state.set_folder_base_name("SAVE".to_string());
 
         assert!(app.handle_add_file_from_entry(ListKind::Include, "BOOT.ELF"));
         assert!(app.handle_add_file_from_entry(ListKind::Exclude, "THUMBS.DB"));
@@ -446,9 +465,9 @@ mod tests {
     #[test]
     fn config_from_state_uses_shift_jis_byte_linebreaks() {
         let mut app = PackerApp::default();
-        app.packer_state.selected_prefix = SasPrefix::App;
-        app.packer_state.folder_base_name = "SAVE".to_string();
-        app.packer_state.psu_file_base_name = "SAVE".to_string();
+        app.packer_state.set_selected_prefix(SasPrefix::App);
+        app.packer_state.set_folder_base_name("SAVE".to_string());
+        app.packer_state.set_psu_file_base_name("SAVE".to_string());
         app.icon_sys_enabled = true;
         app.icon_sys_use_existing = false;
         app.icon_sys_title_line1 = "メモ".to_string();
@@ -675,6 +694,7 @@ impl PackerApp {
         };
 
         let list_label = kind.label();
+        let file_list_kind = kind.as_file_list_kind();
 
         let Some(paths) = rfd::FileDialog::new().set_directory(&folder).pick_files() else {
             return false;
@@ -709,7 +729,7 @@ impl PackerApp {
                 continue;
             };
 
-            match self.add_file_entry(kind, name) {
+            match self.add_file_entry(file_list_kind, name) {
                 Ok(_) => {
                     added_any = true;
                 }
@@ -734,10 +754,12 @@ impl PackerApp {
 
     pub(crate) fn handle_add_file_from_entry(&mut self, kind: ListKind, entry: &str) -> bool {
         let list_label = kind.label();
-        match self.add_file_entry(kind, entry) {
+        let file_list_kind = kind.as_file_list_kind();
+        match self.add_file_entry(file_list_kind, entry) {
             Ok(_) => {
                 self.clear_error_message();
                 self.packer_state.status.clear();
+                self.packer_state.clear_manual_entry(file_list_kind);
                 true
             }
             Err(err) => {
@@ -749,45 +771,41 @@ impl PackerApp {
     }
 
     pub(crate) fn handle_remove_file(&mut self, kind: ListKind) -> bool {
-        let (files, selected) = self.list_mut(kind);
-        let mut removed = false;
-        if let Some(idx) = selected.take() {
-            files.remove(idx);
-            removed = true;
-            if files.is_empty() {
-                *selected = None;
-            } else if idx >= files.len() {
-                *selected = Some(files.len() - 1);
-            } else {
-                *selected = Some(idx);
+        let file_list_kind = kind.as_file_list_kind();
+        let selection = self.packer_state.file_list_selection(file_list_kind);
+        if let Some(index) = selection {
+            let removed = self
+                .packer_state
+                .remove_file_list_entry(file_list_kind, index)
+                .is_some();
+            if removed {
+                self.clear_error_message();
+                self.packer_state.status.clear();
             }
-        }
-        removed
-    }
-
-    fn list_mut(&mut self, kind: ListKind) -> (&mut Vec<String>, &mut Option<usize>) {
-        let state = &mut self.packer_state;
-        match kind {
-            ListKind::Include => (&mut state.include_files, &mut state.selected_include),
-            ListKind::Exclude => (&mut state.exclude_files, &mut state.selected_exclude),
+            removed
+        } else {
+            false
         }
     }
 
-    fn add_file_entry(&mut self, kind: ListKind, entry: &str) -> Result<usize, String> {
+    fn add_file_entry(&mut self, kind: FileListKind, entry: &str) -> Result<usize, String> {
         let trimmed = entry.trim();
         if trimmed.is_empty() {
             return Err("File name cannot be empty".to_string());
         }
 
-        let (files, selected) = self.list_mut(kind);
-        if files.iter().any(|existing| existing == trimmed) {
+        if self
+            .packer_state
+            .file_list_entries(kind)
+            .iter()
+            .any(|existing| existing == trimmed)
+        {
             return Err(format!("{trimmed} (already listed)"));
         }
 
-        files.push(trimmed.to_string());
-        let index = files.len() - 1;
-        *selected = Some(index);
-        Ok(index)
+        Ok(self
+            .packer_state
+            .add_file_list_entry(kind, trimmed.to_string()))
     }
 
     fn validate_icon_sys_settings(&self) -> Result<(), String> {
