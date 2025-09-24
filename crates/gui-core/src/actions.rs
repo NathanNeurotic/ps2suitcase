@@ -1,5 +1,7 @@
 use egui::{Button, Context, KeyboardShortcut, Ui, WidgetText};
 
+use crate::state::SasPrefix;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MetadataTarget {
     PsuToml,
@@ -16,9 +18,12 @@ pub enum EditorAction {
     TimestampAutomation,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum MetadataAction {
     ResetFields,
+    SelectPrefix(SasPrefix),
+    SetFolderBaseName(String),
+    SetPsuFileBaseName(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -61,10 +66,12 @@ pub enum IconSysAction {
     ResetFields,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Action {
     OpenProject,
     PackPsu,
+    UpdatePsu,
+    ExportPsuToFolder,
     ChooseOutputDestination,
     AddFiles,
     SaveFile,
@@ -113,17 +120,18 @@ pub fn action_button(
     dispatcher: &mut impl ActionDispatcher,
     descriptor: &ActionDescriptor,
 ) -> egui::Response {
-    debug_assert!(dispatcher.supports_action(descriptor.action));
+    let action = descriptor.action.clone();
+    debug_assert!(dispatcher.supports_action(action.clone()));
 
     let mut button = Button::new(descriptor.label.clone());
     if let Some(shortcut) = descriptor.shortcut {
         button = button.shortcut_text(ui.ctx().format_shortcut(&shortcut));
     }
 
-    let enabled = dispatcher.is_action_enabled(descriptor.action);
+    let enabled = dispatcher.is_action_enabled(action.clone());
     let response = ui.add_enabled(enabled, button);
     if response.clicked() {
-        dispatcher.trigger_action(descriptor.action);
+        dispatcher.trigger_action(action);
         ui.close_menu();
     }
     response
@@ -134,14 +142,15 @@ pub fn handle_shortcut(
     dispatcher: &mut impl ActionDispatcher,
     descriptor: &ActionDescriptor,
 ) -> bool {
-    if !dispatcher.supports_action(descriptor.action) {
+    let action = descriptor.action.clone();
+    if !dispatcher.supports_action(action.clone()) {
         return false;
     }
     if let Some(shortcut) = descriptor.shortcut {
         if ctx.input_mut(|input| input.consume_shortcut(&shortcut))
-            && dispatcher.is_action_enabled(descriptor.action)
+            && dispatcher.is_action_enabled(action.clone())
         {
-            dispatcher.trigger_action(descriptor.action);
+            dispatcher.trigger_action(action);
             return true;
         }
     }
