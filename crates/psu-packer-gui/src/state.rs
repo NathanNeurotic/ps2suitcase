@@ -6,7 +6,7 @@ use std::{
 
 use crate::ui::theme;
 use crate::{ui, ICON_SYS_TITLE_CHAR_LIMIT};
-use eframe::egui::{self, Widget};
+use eframe::egui;
 #[cfg(test)]
 use gui_core::state::{SasPrefix, REQUIRED_PROJECT_FILES, TIMESTAMP_RULES_FILE};
 use gui_core::{
@@ -65,17 +65,6 @@ const TITLE_CFG_SECTIONS: &[(&str, &[&str])] = &[
     ),
     ("Ratings", &["Rating", "RatingText"]),
 ];
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum EditorTab {
-    PsuSettings,
-    #[cfg(feature = "psu-toml-editor")]
-    /// Enable the psu.toml editor again with `--features psu-toml-editor`.
-    PsuToml,
-    TitleCfg,
-    IconSys,
-    TimestampAuto,
-}
 
 struct TitleCfgCache {
     cfg: TitleCfg,
@@ -204,7 +193,7 @@ pub struct PackerApp {
     pub(crate) icon_sys_use_existing: bool,
     pub(crate) icon_sys_existing: Option<IconSys>,
     pub(crate) zoom_factor: f32,
-    pub(crate) editor_tab: EditorTab,
+    pub(crate) active_editor: EditorAction,
     pub(crate) psu_toml_editor: TextFileEditor,
     pub(crate) title_cfg_editor: TextFileEditor,
     pub(crate) psu_toml_sync_blocked: bool,
@@ -226,7 +215,7 @@ impl Default for PackerApp {
             icon_sys_use_existing: false,
             icon_sys_existing: None,
             zoom_factor: 1.0,
-            editor_tab: EditorTab::PsuSettings,
+            active_editor: EditorAction::PsuSettings,
             psu_toml_editor: TextFileEditor::default(),
             title_cfg_editor: TextFileEditor::default(),
             psu_toml_sync_blocked: false,
@@ -251,35 +240,6 @@ impl PackerApp {
 
     pub(crate) fn packer_state_mut(&mut self) -> &mut PackerState {
         &mut self.packer_state
-    }
-
-    pub(crate) fn editor_tab_button(
-        &mut self,
-        ui: &mut egui::Ui,
-        tab: EditorTab,
-        label: &str,
-        alert: bool,
-        font: &egui::FontId,
-    ) {
-        let widget = EditorTabWidget::new(
-            label,
-            font.clone(),
-            &self.theme,
-            self.editor_tab == tab,
-            alert,
-        );
-        let response = ui.add(widget);
-        if response.clicked() {
-            let action = match tab {
-                EditorTab::PsuSettings => Action::OpenEditor(EditorAction::PsuSettings),
-                #[cfg(feature = "psu-toml-editor")]
-                EditorTab::PsuToml => Action::OpenEditor(EditorAction::PsuToml),
-                EditorTab::TitleCfg => Action::OpenEditor(EditorAction::TitleCfg),
-                EditorTab::IconSys => Action::OpenEditor(EditorAction::IconSys),
-                EditorTab::TimestampAuto => Action::OpenEditor(EditorAction::TimestampAutomation),
-            };
-            self.trigger_action(action);
-        }
     }
 
     pub(crate) fn set_timestamp_strategy(&mut self, strategy: TimestampStrategy) {
@@ -984,7 +944,7 @@ impl PackerApp {
         self.create_file_from_template(
             "psu.toml",
             templates::PSU_TOML_TEMPLATE,
-            EditorTab::PsuToml,
+            EditorAction::PsuToml,
         );
     }
 
@@ -992,11 +952,11 @@ impl PackerApp {
         self.create_file_from_template(
             "title.cfg",
             templates::TITLE_CFG_TEMPLATE,
-            EditorTab::TitleCfg,
+            EditorAction::TitleCfg,
         );
     }
 
-    fn create_file_from_template(&mut self, file_name: &str, template: &str, tab: EditorTab) {
+    fn create_file_from_template(&mut self, file_name: &str, template: &str, intent: EditorAction) {
         if let Some(folder) = self.packer_state.folder.clone() {
             let path = folder.join(file_name);
             if path.exists() {
@@ -1016,7 +976,7 @@ impl PackerApp {
             self.clear_error_message();
             self.reload_project_files();
         } else {
-            if let Some(editor) = self.editor_for_text_tab(tab) {
+            if let Some(editor) = self.editor_for_text_intent(intent) {
                 editor.set_content(template.to_string());
                 editor.modified = true;
                 self.clear_error_message();
@@ -1031,52 +991,60 @@ impl PackerApp {
             }
         }
 
-        match tab {
-            EditorTab::PsuSettings => self.open_psu_settings_tab(),
-            #[cfg(feature = "psu-toml-editor")]
-            EditorTab::PsuToml => self.open_psu_toml_tab(),
-            EditorTab::TitleCfg => self.open_title_cfg_tab(),
-            EditorTab::IconSys => self.open_icon_sys_tab(),
-            EditorTab::TimestampAuto => self.open_timestamp_auto_tab(),
+        match intent {
+            EditorAction::PsuSettings => self.open_psu_settings_tab(),
+            EditorAction::PsuToml => {
+                #[cfg(feature = "psu-toml-editor")]
+                {
+                    self.open_psu_toml_tab();
+                }
+                #[cfg(not(feature = "psu-toml-editor"))]
+                {
+                    self.open_psu_settings_tab();
+                }
+            }
+            EditorAction::TitleCfg => self.open_title_cfg_tab(),
+            EditorAction::IconSys => self.open_icon_sys_tab(),
+            EditorAction::TimestampAutomation => self.open_timestamp_auto_tab(),
         }
     }
 
     #[cfg(feature = "psu-toml-editor")]
-    fn editor_for_text_tab(&mut self, tab: EditorTab) -> Option<&mut TextFileEditor> {
-        match tab {
-            EditorTab::PsuToml => Some(&mut self.psu_toml_editor),
-            EditorTab::TitleCfg => Some(&mut self.title_cfg_editor),
+    fn editor_for_text_intent(&mut self, intent: EditorAction) -> Option<&mut TextFileEditor> {
+        match intent {
+            EditorAction::PsuToml => Some(&mut self.psu_toml_editor),
+            EditorAction::TitleCfg => Some(&mut self.title_cfg_editor),
             _ => None,
         }
     }
 
     #[cfg(not(feature = "psu-toml-editor"))]
-    fn editor_for_text_tab(&mut self, tab: EditorTab) -> Option<&mut TextFileEditor> {
-        match tab {
-            EditorTab::TitleCfg => Some(&mut self.title_cfg_editor),
+    fn editor_for_text_intent(&mut self, intent: EditorAction) -> Option<&mut TextFileEditor> {
+        match intent {
+            EditorAction::TitleCfg => Some(&mut self.title_cfg_editor),
             _ => None,
         }
     }
 
     pub(crate) fn open_psu_settings_tab(&mut self) {
-        self.editor_tab = EditorTab::PsuSettings;
+        self.active_editor = EditorAction::PsuSettings;
     }
 
     #[cfg(feature = "psu-toml-editor")]
     pub(crate) fn open_psu_toml_tab(&mut self) {
-        self.editor_tab = EditorTab::PsuToml;
+        self.active_editor = EditorAction::PsuToml;
     }
 
     pub(crate) fn open_title_cfg_tab(&mut self) {
-        self.editor_tab = EditorTab::TitleCfg;
+        self.active_editor = EditorAction::TitleCfg;
     }
 
     pub(crate) fn open_icon_sys_tab(&mut self) {
-        self.editor_tab = EditorTab::IconSys;
+        self.active_editor = EditorAction::IconSys;
     }
 
     pub(crate) fn open_timestamp_auto_tab(&mut self) {
-        self.editor_tab = EditorTab::TimestampAuto;
+        self.active_editor = EditorAction::TimestampAutomation;
     }
 
     pub(crate) fn has_source(&self) -> bool {
@@ -2354,101 +2322,6 @@ pub(crate) fn title_cfg_form_ui(
 
     ui.add_space(8.0);
     editor_action_buttons(ui, "title.cfg", editing_enabled, save_enabled, editor)
-}
-
-pub(crate) struct EditorTabWidget<'a> {
-    label: &'a str,
-    font: egui::FontId,
-    theme: &'a theme::Palette,
-    is_selected: bool,
-    alert: bool,
-}
-
-impl<'a> EditorTabWidget<'a> {
-    fn new(
-        label: &'a str,
-        font: egui::FontId,
-        theme: &'a theme::Palette,
-        is_selected: bool,
-        alert: bool,
-    ) -> Self {
-        Self {
-            label,
-            font,
-            theme,
-            is_selected,
-            alert,
-        }
-    }
-}
-
-impl<'a> Widget for EditorTabWidget<'a> {
-    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
-        let base_padding = egui::vec2(12.0, 6.0);
-        let hover_extra = egui::vec2(2.0, 2.0);
-        let selected_extra = egui::vec2(4.0, 4.0);
-        let max_padding = base_padding + selected_extra;
-        let rounding = egui::CornerRadius::same(10);
-
-        let mut text_color = self.theme.text_primary;
-        if self.is_selected {
-            text_color = egui::Color32::WHITE;
-        } else if self.alert {
-            text_color = self.theme.neon_accent;
-        }
-
-        let galley = ui.fonts(|fonts| {
-            fonts.layout_no_wrap(self.label.to_owned(), self.font.clone(), text_color)
-        });
-        let desired_size = galley.size() + max_padding * 2.0;
-
-        let (rect, mut response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
-
-        if ui.is_rect_visible(rect) {
-            let mut padding = base_padding;
-            if response.hovered() {
-                padding += hover_extra;
-            }
-            if self.is_selected {
-                padding += selected_extra;
-            }
-
-            let fill = if self.is_selected {
-                self.theme.neon_accent.gamma_multiply(0.45)
-            } else if response.hovered() {
-                self.theme.soft_accent.gamma_multiply(0.38)
-            } else if self.alert {
-                self.theme.neon_accent.gamma_multiply(0.24)
-            } else {
-                self.theme.soft_accent.gamma_multiply(0.24)
-            };
-
-            let mut stroke_color = self.theme.soft_accent.gamma_multiply(0.7);
-            if self.is_selected {
-                stroke_color = self.theme.neon_accent;
-            } else if self.alert || response.hovered() {
-                stroke_color = self.theme.neon_accent.gamma_multiply(0.8);
-            }
-
-            ui.painter().rect_filled(rect, rounding, fill);
-            ui.painter().rect_stroke(
-                rect,
-                rounding,
-                egui::Stroke::new(1.0, stroke_color),
-                egui::StrokeKind::Outside,
-            );
-
-            let text_pos = rect.left_top() + padding;
-            ui.painter().galley(text_pos, galley, text_color);
-        }
-
-        response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-        let enabled = response.enabled();
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, self.label)
-        });
-        response
-    }
 }
 
 #[cfg(test)]
