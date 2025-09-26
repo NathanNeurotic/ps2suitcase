@@ -358,6 +358,19 @@ impl PackerApp {
         &self.icon_sys_state
     }
 
+    pub fn load_project_from_path(&mut self, folder: &Path) {
+        ui::file_picker::load_project_files(self, folder);
+        if self.icon_sys_enabled {
+            self.open_icon_sys_tab();
+        } else {
+            self.open_psu_settings_tab();
+        }
+    }
+
+    pub fn set_output_destination<P: AsRef<Path>>(&mut self, path: P) {
+        self.packer_state.output = path.as_ref().display().to_string();
+    }
+
     pub(crate) fn clear_icon_sys_preset(&mut self) {
         self.icon_sys_state.clear_preset();
     }
