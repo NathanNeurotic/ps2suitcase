@@ -3903,6 +3903,7 @@ dependencies = [
  "notify",
  "ps2-filetypes",
  "psu-packer",
+ "psu-packer-gui",
  "relative-path",
  "rfd 0.15.3",
  "serde",

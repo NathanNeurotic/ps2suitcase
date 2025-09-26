@@ -8,10 +8,12 @@
 
 pub mod actions;
 pub mod commands;
+pub mod shell;
 pub mod state;
 pub mod validation;
 
 pub use actions::*;
 pub use commands::*;
+pub use shell::*;
 pub use state::*;
 pub use validation::*;
